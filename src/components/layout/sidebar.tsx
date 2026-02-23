@@ -23,6 +23,8 @@ import {
   Fingerprint,
   LogOut,
   User,
+  Brain,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -107,6 +109,14 @@ const navigation = [
     description: "Overview & metrics",
   },
   {
+    name: "Investigation",
+    href: "/investigation",
+    icon: Brain,
+    description: "AI-powered OSINT",
+    badge: "AI",
+    highlight: true, // New feature highlight
+  },
+  {
     name: "Entities",
     href: "/entities",
     icon: Users,
@@ -140,7 +150,7 @@ const navigation = [
     name: "OSINT Tools",
     href: "/osint",
     icon: Crosshair,
-    description: "Data collection",
+    description: "Manual searches",
   },
   {
     name: "Tracking",
@@ -151,9 +161,6 @@ const navigation = [
 ];
 
 const secondaryNav = [
-  { name: "Investigations", href: "/investigations", icon: Fingerprint },
-  { name: "Data Sources", href: "/sources", icon: Database },
-  { name: "Activity Log", href: "/activity", icon: Activity },
   { name: "Settings", href: "/settings", icon: Settings },
   { name: "Account", href: "/account/settings", icon: User },
 ];
@@ -219,7 +226,7 @@ export function Sidebar() {
               key={item.name}
               href={item.href}
               className={cn(
-                "group flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200",
+                "group relative flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200",
                 isActive
                   ? "bg-matrix/10 text-matrix"
                   : "text-text-secondary hover:text-white hover:bg-glass-bg"
@@ -238,14 +245,21 @@ export function Sidebar() {
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -10 }}
                     transition={{ duration: 0.2 }}
-                    className="flex flex-col flex-1 min-w-0"
+                    className="flex items-center gap-2 flex-1 min-w-0"
                   >
-                    <span className="text-sm font-medium truncate">
-                      {item.name}
-                    </span>
-                    <span className="text-2xs text-text-muted truncate">
-                      {item.description}
-                    </span>
+                    <div className="flex flex-col flex-1 min-w-0">
+                      <span className="text-sm font-medium truncate">
+                        {item.name}
+                      </span>
+                      <span className="text-2xs text-text-muted truncate">
+                        {item.description}
+                      </span>
+                    </div>
+                    {item.badge && (
+                      <span className="px-1.5 py-0.5 text-2xs font-bold rounded bg-matrix/20 text-matrix border border-matrix/30">
+                        {item.badge}
+                      </span>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -254,6 +268,13 @@ export function Sidebar() {
                   layoutId="activeIndicator"
                   className="absolute right-0 w-1 h-8 bg-matrix rounded-l-full"
                   transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                />
+              )}
+              {item.highlight && !isCollapsed && !isActive && (
+                <motion.div
+                  animate={{ scale: [1, 1.2, 1] }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                  className="absolute -right-1 -top-1 w-2 h-2 rounded-full bg-matrix"
                 />
               )}
             </Link>

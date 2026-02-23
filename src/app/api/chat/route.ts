@@ -4,6 +4,9 @@ import { entities, reports, userSettings } from "@/lib/db/schema";
 import { eq, ilike, or, desc, sql } from "drizzle-orm";
 import OpenAI from "openai";
 
+// Ollama client adapter
+import { OllamaClient, createOllamaClient } from "@/lib/ai/ollama-adapter";
+
 // Create Azure OpenAI client using OpenAI SDK
 function createAzureClient(endpoint: string, apiKey: string, deploymentName: string, apiVersion: string): OpenAI {
   return new OpenAI({
@@ -15,7 +18,7 @@ function createAzureClient(endpoint: string, apiKey: string, deploymentName: str
 }
 
 // Get AI client based on user settings
-async function getAIClient(userId?: string): Promise<{
+/* async function getAIClient(userId?: string): Promise<{
   type: "azure" | "openai" | null;
   client: OpenAI | null;
   model?: string;
@@ -65,6 +68,82 @@ async function getAIClient(userId?: string): Promise<{
   }
 
   return { type: null, client: null };
+} */
+
+async function getAIClient(userId?: string): Promise<{
+  type: "azure" | "openai" | "ollama" | null;
+  client: OpenAI | OllamaClient | null;
+  model?: string;
+}> {
+  // Try environment variables for Ollama first (NEW)
+  if (process.env.OLLAMA_BASE_URL) {
+    return {
+      type: "ollama",
+      client: createOllamaClient({
+        baseUrl: process.env.OLLAMA_BASE_URL,
+        model: process.env.OLLAMA_MODEL || "mistral",
+      }),
+      model: process.env.OLLAMA_MODEL || "mistral",
+    };
+  }
+
+  if (userId) {
+    const settings = await db
+      .select()
+      .from(userSettings)
+      .where(eq(userSettings.userId, userId))
+      .limit(1);
+
+    if (settings.length > 0) {
+      const s = settings[0];
+
+      // Try Ollama from user settings (NEW)
+      if (s.ollamaBaseUrl && s.ollamaModel) {
+        return {
+          type: "ollama",
+          client: createOllamaClient({
+            baseUrl: s.ollamaBaseUrl,
+            model: s.ollamaModel,
+          }),
+          model: s.ollamaModel,
+        };
+      }
+
+      // Try Azure OpenAI
+      if (s.azureEndpoint && s.azureApiKey && s.azureDeploymentName) {
+        return {
+          type: "azure",
+          client: createAzureClient(
+            s.azureEndpoint,
+            s.azureApiKey,
+            s.azureDeploymentName,
+            s.azureApiVersion || "2024-02-15-preview"
+          ),
+          model: "",
+        };
+      }
+
+      // Fall back to OpenAI
+      if (s.openaiApiKey) {
+        return {
+          type: "openai",
+          client: new OpenAI({ apiKey: s.openaiApiKey }),
+          model: s.defaultAiModel || "gpt-4",
+        };
+      }
+    }
+  }
+
+  // Try environment variables for OpenAI as last resort
+  if (process.env.OPENAI_API_KEY) {
+    return {
+      type: "openai",
+      client: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+      model: "gpt-4",
+    };
+  }
+
+  return { type: null, client: null };
 }
 
 // System prompt for the AI analyst
@@ -89,7 +168,7 @@ Current context will be provided with each query including relevant entities and
 // Search database for relevant context
 async function getContextForQuery(query: string): Promise<string> {
   const queryLower = query.toLowerCase();
-  
+
   // Search entities
   const relevantEntities = await db
     .select()
@@ -234,7 +313,7 @@ export async function POST(request: NextRequest) {
       model: model || "gpt-4",
       messages,
       max_tokens: 2048,
-      temperature: 0.7,
+      temperature: 0.1,
     });
 
     const response = completion.choices[0]?.message?.content || "No response generated.";
@@ -246,9 +325,9 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("Chat API error:", error);
-    
+
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    
+
     return NextResponse.json(
       {
         error: "Failed to generate response",

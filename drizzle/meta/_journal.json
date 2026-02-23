@@ -15,6 +15,13 @@
       "when": 1766737587331,
       "tag": "0001_clean_rictor",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1771503720228,
+      "tag": "0002_complete_ares",
+      "breakpoints": true
     }
   ]
 }

@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth/client";
 import { DashboardShell } from "@/components/layout";
 import {
@@ -16,11 +17,11 @@ import {
 } from "@/components/dashboard";
 
 export default function DashboardPage() {
-  const [session, setSession] = useState<any>(null);
-  const [isPending, setIsPending] = useState(true);
+  const router = useRouter();
+  const { data: session, isPending } = authClient.useSession();
   const [currentTime, setCurrentTime] = useState<string>("--:--:--");
 
-  // Update time every second (client-side only to avoid hydration mismatch)
+  // Update time every second
   useEffect(() => {
     setCurrentTime(new Date().toLocaleTimeString());
     const interval = setInterval(() => {
@@ -29,20 +30,34 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, []);
 
+  // Redirect if not authenticated
   useEffect(() => {
-    // Get session using authClient directly
-    authClient.getSession()
-      .then((data) => {
-        setSession(data?.session || null);
-        setIsPending(false);
-      })
-      .catch(() => {
-        setSession(null);
-        setIsPending(false);
-      });
-  }, []);
+    if (!isPending && !session) {
+      console.log("Not authenticated, redirecting...");
+      router.push("/auth/sign-in");
+    }
+  }, [session, isPending, router]);
 
-  const userName = session?.user?.name?.split(" ")[0] || "Operator";
+  // Extract user from session (Better Auth structure)
+  const user = session?.user;
+  const userName = user?.name?.split(" ")[0] || user?.email?.split("@")[0] || "Operator";
+
+  // Show loading while checking auth
+  if (isPending) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-text-secondary">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Don't render if no session
+  if (!session) {
+    return null;
+  }
 
   return (
     <DashboardShell>
@@ -131,5 +146,3 @@ export default function DashboardPage() {
     </DashboardShell>
   );
 }
-
-

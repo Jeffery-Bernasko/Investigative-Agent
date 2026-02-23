@@ -1,9 +1,45 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { osintSearches, entities, userSettings } from "@/lib/db/schema";
+import { osintSearches, userSettings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { socialPlatforms, categories } from "@/lib/osint/platforms";
+import { auth } from "@/lib/auth";
+import { searchUsername, searchWithTavily } from "@/lib/agents/tools/osint-tools";
 import axios from "axios";
+
+
+// Helper: Detect if query is a person name vs username
+function parseSearchQuery(query: string): {
+  type: "username" | "person";
+  cleanedQuery: string;
+  suggestedUsername?: string;
+} {
+  const trimmed = query.trim();
+  
+  // If starts with @, it's definitely a username
+  if (trimmed.startsWith("@")) {
+    return {
+      type: "username",
+      cleanedQuery: trimmed.replace(/^@/, "").toLowerCase(),
+    };
+  }
+  
+  // If contains spaces, likely a person name
+  if (trimmed.includes(" ")) {
+    const suggested = trimmed.toLowerCase().replace(/\s+/g, "");
+    return {
+      type: "person",
+      cleanedQuery: trimmed,
+      suggestedUsername: suggested,
+    };
+  }
+  
+  // Single word - treat as username
+  return {
+    type: "username",
+    cleanedQuery: trimmed.toLowerCase(),
+  };
+}
+
 
 // Rate limiting: simple in-memory store
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
@@ -11,83 +47,18 @@ const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
 function checkRateLimit(ip: string): boolean {
   const now = Date.now();
   const limit = rateLimitStore.get(ip);
-  
+
   if (!limit || now > limit.resetTime) {
-    rateLimitStore.set(ip, { count: 1, resetTime: now + 60000 }); // 1 minute window
+    rateLimitStore.set(ip, { count: 1, resetTime: now + 60000 });
     return true;
   }
-  
-  if (limit.count >= 10) { // 10 requests per minute
+
+  if (limit.count >= 20) { // Increased to 20 requests per minute
     return false;
   }
-  
+
   limit.count++;
   return true;
-}
-
-// Check if URL returns 200 (profile exists)
-async function checkUrlExists(url: string): Promise<{ exists: boolean; statusCode?: number }> {
-  try {
-    const response = await axios.head(url, {
-      timeout: 5000,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      },
-      validateStatus: () => true,
-    });
-    
-    return {
-      exists: response.status === 200,
-      statusCode: response.status,
-    };
-  } catch {
-    return { exists: false };
-  }
-}
-
-// Username enumeration across platforms
-async function searchUsername(username: string): Promise<{
-  platforms: Array<{
-    name: string;
-    url: string;
-    exists: boolean;
-    category: string;
-  }>;
-  summary: string;
-}> {
-  const results: Array<{
-    name: string;
-    url: string;
-    exists: boolean;
-    category: string;
-  }> = [];
-
-  // Check top 20 platforms (to avoid rate limiting and keep response fast)
-  const topPlatforms = socialPlatforms.slice(0, 20);
-  
-  const checks = await Promise.allSettled(
-    topPlatforms.map(async (platform) => {
-      const url = platform.url.replace("{}", username);
-      const { exists } = await checkUrlExists(url);
-      return {
-        name: platform.name,
-        url,
-        exists,
-        category: platform.category,
-      };
-    })
-  );
-
-  for (const check of checks) {
-    if (check.status === "fulfilled") {
-      results.push(check.value);
-    }
-  }
-
-  const foundCount = results.filter((r) => r.exists).length;
-  const summary = `Found ${foundCount} profiles for username "${username}" across ${results.length} platforms checked.`;
-
-  return { platforms: results, summary };
 }
 
 // Email intelligence
@@ -113,7 +84,7 @@ async function searchEmail(email: string, apiKeys: { hunter?: string; hibp?: str
       const response = await axios.get(
         `https://api.hunter.io/v2/email-verifier?email=${encodeURIComponent(email)}&api_key=${apiKeys.hunter}`
       );
-      
+
       if (response.data.data) {
         results.push({
           name: "Hunter.io Email Verification",
@@ -145,7 +116,7 @@ async function searchEmail(email: string, apiKeys: { hunter?: string; hibp?: str
           },
         }
       );
-      
+
       if (response.data && Array.isArray(response.data)) {
         results.push({
           name: "Have I Been Pwned",
@@ -176,8 +147,10 @@ async function searchEmail(email: string, apiKeys: { hunter?: string; hibp?: str
     const crypto = await import("crypto");
     const hash = crypto.createHash("md5").update(email.toLowerCase().trim()).digest("hex");
     const gravatarUrl = `https://www.gravatar.com/avatar/${hash}?d=404`;
-    const { exists } = await checkUrlExists(gravatarUrl);
     
+    const response = await fetch(gravatarUrl, { method: "HEAD" });
+    const exists = response.ok;
+
     results.push({
       name: "Gravatar",
       url: `https://en.gravatar.com/${hash}`,
@@ -236,7 +209,7 @@ async function searchDomain(domain: string, apiKeys: { virustotal?: string; shod
           headers: { "x-apikey": apiKeys.virustotal },
         }
       );
-      
+
       if (response.data.data) {
         const attrs = response.data.data.attributes;
         results.push({
@@ -263,7 +236,7 @@ async function searchDomain(domain: string, apiKeys: { virustotal?: string; shod
       const response = await axios.get(
         `https://api.shodan.io/dns/domain/${domain}?key=${apiKeys.shodan}`
       );
-      
+
       if (response.data) {
         results.push({
           name: "Shodan DNS",
@@ -318,25 +291,28 @@ async function searchPhone(phone: string): Promise<{
     },
   });
 
-  // Try to identify country from phone number
-  if (cleanPhone.startsWith("+1")) {
-    results.push({
-      name: "Country Detection",
-      exists: true,
-      data: { country: "United States/Canada", countryCode: "+1" },
-    });
-  } else if (cleanPhone.startsWith("+44")) {
-    results.push({
-      name: "Country Detection",
-      exists: true,
-      data: { country: "United Kingdom", countryCode: "+44" },
-    });
-  } else if (cleanPhone.startsWith("+60")) {
-    results.push({
-      name: "Country Detection",
-      exists: true,
-      data: { country: "Malaysia", countryCode: "+60" },
-    });
+  // Country detection
+  const countryMap: Record<string, string> = {
+    "+1": "United States/Canada",
+    "+44": "United Kingdom",
+    "+60": "Malaysia",
+    "+91": "India",
+    "+86": "China",
+    "+81": "Japan",
+    "+61": "Australia",
+    "+33": "France",
+    "+49": "Germany",
+  };
+
+  for (const [code, country] of Object.entries(countryMap)) {
+    if (cleanPhone.startsWith(code)) {
+      results.push({
+        name: "Country Detection",
+        exists: true,
+        data: { country, countryCode: code },
+      });
+      break;
+    }
   }
 
   const summary = `Phone analysis completed for "${phone}".`;
@@ -346,23 +322,39 @@ async function searchPhone(phone: string): Promise<{
 
 export async function POST(request: NextRequest) {
   try {
-    const ip = request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "unknown";
+    console.log("\n🔍 ===== OSINT SEARCH API =====");
     
+    const ip = request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "unknown";
+
     if (!checkRateLimit(ip)) {
+      console.log("❌ Rate limit exceeded for IP:", ip);
       return NextResponse.json(
         { error: "Rate limit exceeded. Please wait before making more requests." },
         { status: 429 }
       );
     }
 
-    const { searchType, query, userId } = await request.json();
+    // Get session
+    const session = await auth.api.getSession({ headers: request.headers });
+    const userId = session?.user?.id;
 
-    if (!searchType || !query) {
+    const body = await request.json();
+    const { searchType = "username", query, username } = body;
+    
+    // Support both 'query' and 'username' parameters
+    const searchQuery = query || username;
+
+    if (!searchQuery) {
+      console.log("❌ Missing query parameter");
       return NextResponse.json(
-        { error: "Missing searchType or query" },
+        { error: "Missing search query" },
         { status: 400 }
       );
     }
+
+    console.log(`📋 Search Type: ${searchType}`);
+    console.log(`🎯 Query: ${searchQuery}`);
+    console.log(`👤 User: ${userId || "Anonymous"}`);
 
     // Get user's API keys
     let apiKeys: {
@@ -370,6 +362,7 @@ export async function POST(request: NextRequest) {
       shodan?: string;
       virustotal?: string;
       hibp?: string;
+      tavily?: string;
     } = {};
 
     if (userId) {
@@ -389,51 +382,203 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    let results;
+    // Fall back to environment variables
+    apiKeys.hunter = apiKeys.hunter || process.env.HUNTER_API_KEY;
+    apiKeys.shodan = apiKeys.shodan || process.env.SHODAN_API_KEY;
+    apiKeys.virustotal = apiKeys.virustotal || process.env.VIRUSTOTAL_API_KEY;
+    apiKeys.hibp = apiKeys.hibp || process.env.HIBP_API_KEY;
+    apiKeys.tavily = apiKeys.tavily || process.env.TAVILY_API_KEY;
+
+    let results: any;
+    const startTime = Date.now();
 
     switch (searchType) {
-      case "username":
-        results = await searchUsername(query);
-        break;
+  case "username": {
+    console.log("\n🔍 Starting username search...");
+    
+    // Parse the query to detect if it's a person name
+    const parsed = parseSearchQuery(searchQuery);
+    console.log(`📝 Query type: ${parsed.type}`);
+    
+    let usernameToSearch: string;
+    let profiles: any[] = [];
+    
+    if (parsed.type === "person") {
+      console.log(`👤 Detected person name: "${parsed.cleanedQuery}"`);
+      
+      // Check if we have a known username mapping
+      
+      
+        usernameToSearch = parsed.suggestedUsername || parsed.cleanedQuery;
+        console.log(`💡 Suggested username: ${usernameToSearch}`);
+      
+      
+      // Search with suggested username
+      const usernameResult = await searchUsername(usernameToSearch);
+      profiles = usernameResult.profiles;
+      
+      // Also do a Tavily search for the person's name to find more profiles
+      if (apiKeys.tavily) {
+        console.log(`\n🌐 Searching for person name via Tavily...`);
+        const nameResults = await searchWithTavily(
+          `"${parsed.cleanedQuery}" social media profile site:twitter.com OR site:linkedin.com OR site:instagram.com OR site:github.com`,
+          apiKeys.tavily
+        );
+        
+        console.log(`📊 Tavily found ${nameResults.length} person-name results`);
+        
+        // Extract usernames from Tavily results
+        nameResults.forEach((result) => {
+          const url = result.url.toLowerCase();
+          let platform = "Other";
+          let extractedUrl = result.url;
+          let confidence: "high" | "medium" | "low" = "high";
+          
+          // Extract username from URL
+          if (url.includes("twitter.com/") || url.includes("x.com/")) {
+            platform = "Twitter";
+            const match = url.match(/(?:twitter\.com|x\.com)\/([^\/\?]+)/);
+            if (match) extractedUrl = `https://twitter.com/${match[1]}`;
+          } else if (url.includes("linkedin.com/in/")) {
+            platform = "LinkedIn";
+            const match = url.match(/linkedin\.com\/in\/([^\/\?]+)/);
+            if (match) extractedUrl = `https://linkedin.com/in/${match[1]}`;
+          } else if (url.includes("instagram.com/")) {
+            platform = "Instagram";
+            const match = url.match(/instagram\.com\/([^\/\?]+)/);
+            if (match) extractedUrl = `https://instagram.com/${match[1]}`;
+          } else if (url.includes("github.com/")) {
+            platform = "GitHub";
+            const match = url.match(/github\.com\/([^\/\?]+)/);
+            if (match) extractedUrl = `https://github.com/${match[1]}`;
+          } else if (url.includes("facebook.com/")) {
+            platform = "Facebook";
+            const match = url.match(/facebook\.com\/([^\/\?]+)/);
+            if (match) extractedUrl = `https://facebook.com/${match[1]}`;
+          }
+          
+          // Check if we already have this platform
+          const existing = profiles.find(p => p.platform === platform);
+          if (!existing) {
+            console.log(`  ✨ Found ${platform} via name search`);
+            profiles.push({
+              platform,
+              url: extractedUrl,
+              found: true,
+              confidence,
+              checkedAt: new Date(),
+            });
+          } else if (existing.confidence !== "high") {
+            // Upgrade confidence
+            console.log(`  ⬆️ Upgraded ${platform} to high confidence`);
+            existing.confidence = "high";
+            existing.url = extractedUrl;
+          }
+        });
+      }
+    } else {
+      // Direct username search
+      console.log(`👤 Searching for username: ${parsed.cleanedQuery}`);
+      const usernameResult = await searchUsername(parsed.cleanedQuery);
+      profiles = usernameResult.profiles;
+    }
+    
+    // Convert to expected format
+    results = {
+      platforms: profiles.map(p => ({
+        name: p.platform,
+        url: p.url,
+        exists: p.found,
+        confidence: p.confidence,
+        category: "Social Media",
+      })),
+      summary: `Found ${profiles.length} profiles for "${searchQuery}" across 20 platforms checked.`,
+    };
+    
+    console.log(`✅ Username search complete: ${profiles.length} profiles found`);
+    break;
+  }
+
+
       case "email":
-        results = await searchEmail(query, apiKeys);
+        console.log("\n📧 Starting email search...");
+        results = await searchEmail(searchQuery, apiKeys);
+        console.log(`✅ Email search complete`);
         break;
+
       case "domain":
-        results = await searchDomain(query, apiKeys);
+        console.log("\n🌐 Starting domain search...");
+        results = await searchDomain(searchQuery, apiKeys);
+        console.log(`✅ Domain search complete`);
         break;
+
       case "phone":
-        results = await searchPhone(query);
+        console.log("\n📱 Starting phone search...");
+        results = await searchPhone(searchQuery);
+        console.log(`✅ Phone search complete`);
         break;
+
       default:
+        console.log(`❌ Invalid search type: ${searchType}`);
         return NextResponse.json(
           { error: "Invalid search type" },
           { status: 400 }
         );
     }
 
+    const duration = Date.now() - startTime;
+
+    // Enrich with Tavily web search
+    let webResults: Array<{ title: string; url: string; snippet: string }> = [];
+    if (apiKeys.tavily) {
+      console.log("\n🌐 Enriching with Tavily web search...");
+      const tavilyQuery = searchType === "username"
+        ? `"${searchQuery}" social media profile`
+        : `"${searchQuery}" OSINT`;
+      
+      const webSearch = await searchWithTavily(tavilyQuery, apiKeys.tavily);
+      webResults = webSearch;
+      console.log(`✅ Tavily returned ${webResults.length} results`);
+    }
+
     // Store search in database
-    const searchRecord = await db
-      .insert(osintSearches)
-      .values({
-        userId: userId || null,
-        searchType,
-        query,
-        results,
-        status: "completed",
-        completedAt: new Date(),
-      })
-      .returning();
+    try {
+      const searchRecord = await db
+        .insert(osintSearches)
+        .values({
+          userId: userId || null,
+          searchType: searchType as any,
+          query: searchQuery,
+          results: {
+            platforms: results.platforms,
+            summary: results.summary,
+          },
+          status: "completed",
+          completedAt: new Date(),
+        })
+        .returning();
+
+      console.log(`💾 Stored search record: ${searchRecord[0].id}`);
+    } catch (dbError) {
+      console.error("❌ Failed to store search record:", dbError);
+      // Continue anyway - don't fail the request
+    }
+
+    console.log(`\n✅ ===== SEARCH COMPLETE (${duration}ms) =====\n`);
 
     return NextResponse.json({
       success: true,
-      searchId: searchRecord[0].id,
+      searchType,
+      query: searchQuery,
       ...results,
-      categories,
+      webResults,
+      duration,
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("OSINT search error:", error);
+    console.error("\n❌ OSINT search error:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Internal server error", details: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 }
     );
   }
@@ -461,5 +606,3 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-
-

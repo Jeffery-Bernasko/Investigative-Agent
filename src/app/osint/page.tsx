@@ -18,6 +18,8 @@ import {
   Clock,
   Database,
   ChevronRight,
+  Sparkles,
+  Target,
 } from "lucide-react";
 import { DashboardShell } from "@/components/layout";
 
@@ -28,6 +30,7 @@ interface SearchResult {
   url?: string;
   exists: boolean;
   category?: string;
+  confidence?: "high" | "medium" | "low";
   data?: Record<string, unknown>;
 }
 
@@ -35,16 +38,70 @@ interface SearchResponse {
   success: boolean;
   platforms: SearchResult[];
   summary: string;
+  webResults?: Array<{ title: string; url: string; snippet: string }>;
   categories?: Record<string, { name: string; color: string }>;
 }
 
-const searchTypes: { id: SearchType; label: string; icon: typeof User; placeholder: string }[] = [
-  { id: "username", label: "Username", icon: AtSign, placeholder: "johndoe123" },
-  { id: "email", label: "Email", icon: AtSign, placeholder: "john@example.com" },
-  { id: "phone", label: "Phone", icon: Phone, placeholder: "+1234567890" },
-  { id: "domain", label: "Domain", icon: Globe, placeholder: "example.com" },
-  { id: "image", label: "Image", icon: Image, placeholder: "Paste image URL..." },
+const searchTypes: { id: SearchType; label: string; icon: typeof User; placeholder: string; examples: string[] }[] = [
+  { 
+    id: "username", 
+    label: "Username", 
+    icon: AtSign, 
+    placeholder: "elonmusk or @github",
+    examples: ["elonmusk", "@github", "Elon Musk"]
+  },
+  { 
+    id: "email", 
+    label: "Email", 
+    icon: AtSign, 
+    placeholder: "john@example.com",
+    examples: ["test@example.com"]
+  },
+  { 
+    id: "phone", 
+    label: "Phone", 
+    icon: Phone, 
+    placeholder: "+1234567890",
+    examples: ["+1234567890", "+60123456789"]
+  },
+  { 
+    id: "domain", 
+    label: "Domain", 
+    icon: Globe, 
+    placeholder: "example.com",
+    examples: ["tesla.com", "github.com"]
+  },
+  { 
+    id: "image", 
+    label: "Image", 
+    icon: Image, 
+    placeholder: "Paste image URL...",
+    examples: []
+  },
 ];
+
+// Confidence badge component
+function ConfidenceBadge({ confidence }: { confidence?: "high" | "medium" | "low" }) {
+  if (!confidence) return null;
+  
+  const styles = {
+    high: "bg-green-500/20 text-green-400 border-green-500/30",
+    medium: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+    low: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+  };
+  
+  const icons = {
+    high: "🟢",
+    medium: "🟡",
+    low: "⚪",
+  };
+  
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded border ${styles[confidence]}`}>
+      {icons[confidence]} {confidence}
+    </span>
+  );
+}
 
 export default function OSINTPage() {
   const [searchType, setSearchType] = useState<SearchType>("username");
@@ -98,6 +155,8 @@ export default function OSINTPage() {
   const selectedType = searchTypes.find((t) => t.id === searchType)!;
   const foundCount = results?.platforms.filter((p) => p.exists).length || 0;
   const notFoundCount = results?.platforms.filter((p) => !p.exists).length || 0;
+  const highConfidenceCount = results?.platforms.filter((p) => p.confidence === "high").length || 0;
+  const mediumConfidenceCount = results?.platforms.filter((p) => p.confidence === "medium").length || 0;
 
   return (
     <DashboardShell>
@@ -124,7 +183,7 @@ export default function OSINTPage() {
           </div>
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20">
             <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-            <span className="text-sm text-primary font-medium">200+ platforms supported</span>
+            <span className="text-sm text-primary font-medium">20+ platforms • AI-powered</span>
           </div>
         </motion.div>
 
@@ -184,13 +243,36 @@ export default function OSINTPage() {
             </button>
           </div>
 
-          <div className="flex gap-4 mt-4 text-sm text-gray-500">
-            <span className="flex items-center gap-1">
-              <Shield className="w-4 h-4" />
-              Tips:
-            </span>
-            <span>Use exact usernames for better results</span>
-            <span>Include country code for phone lookups</span>
+          {/* Tips Section */}
+          <div className="mt-4 space-y-2">
+            <div className="flex gap-4 text-sm text-gray-500">
+              <span className="flex items-center gap-1">
+                <Shield className="w-4 h-4" />
+                Tips:
+              </span>
+              <span>Use exact usernames for better results</span>
+              <span>Include country code for phone lookups</span>
+            </div>
+            
+            {searchType === "username" && (
+              <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-start gap-2">
+                <Sparkles className="w-4 h-4 text-blue-400 mt-0.5 flex-shrink-0" />
+                <div className="text-xs text-blue-300">
+                  <strong>Pro Tip:</strong> You can search for <strong>person names</strong> like "Elon Musk" and we'll automatically find their usernames, or use <strong>@username</strong> format for direct searches.
+                  <div className="mt-1 flex gap-2 flex-wrap">
+                    {selectedType.examples.map((example) => (
+                      <button
+                        key={example}
+                        onClick={() => setQuery(example)}
+                        className="px-2 py-0.5 rounded bg-blue-500/20 hover:bg-blue-500/30 transition-colors"
+                      >
+                        {example}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </motion.div>
 
@@ -236,6 +318,14 @@ export default function OSINTPage() {
                       <div className="text-xs text-gray-500">Found</div>
                     </div>
                     <div className="text-center">
+                      <div className="text-2xl font-bold text-green-500">{highConfidenceCount}</div>
+                      <div className="text-xs text-gray-500">High Conf</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-yellow-500">{mediumConfidenceCount}</div>
+                      <div className="text-xs text-gray-500">Medium</div>
+                    </div>
+                    <div className="text-center">
                       <div className="text-2xl font-bold text-gray-500">{notFoundCount}</div>
                       <div className="text-xs text-gray-500">Not Found</div>
                     </div>
@@ -255,6 +345,11 @@ export default function OSINTPage() {
                     <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
                       {results.platforms
                         .filter((p) => p.exists)
+                        .sort((a, b) => {
+                          // Sort by confidence: high > medium > low
+                          const order = { high: 3, medium: 2, low: 1 };
+                          return (order[b.confidence || "low"] || 0) - (order[a.confidence || "low"] || 0);
+                        })
                         .map((platform, index) => (
                           <motion.a
                             key={platform.name}
@@ -266,18 +361,21 @@ export default function OSINTPage() {
                             transition={{ delay: index * 0.05 }}
                             className="flex items-center justify-between p-4 rounded-xl bg-green-500/10 border border-green-500/20 hover:bg-green-500/20 transition-all group"
                           >
-                            <div className="flex items-center gap-3">
-                              <CheckCircle2 className="w-5 h-5 text-green-400" />
-                              <div>
-                                <div className="font-medium text-white">{platform.name}</div>
-                                {platform.category && (
-                                  <div className="text-xs text-gray-500 capitalize">
-                                    {platform.category}
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              <CheckCircle2 className="w-5 h-5 text-green-400 flex-shrink-0" />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <div className="font-medium text-white">{platform.name}</div>
+                                  <ConfidenceBadge confidence={platform.confidence} />
+                                </div>
+                                {platform.url && (
+                                  <div className="text-xs text-gray-500 truncate" title={platform.url}>
+                                    {platform.url}
                                   </div>
                                 )}
                               </div>
                             </div>
-                            <ExternalLink className="w-4 h-4 text-gray-500 group-hover:text-green-400 transition-colors" />
+                            <ExternalLink className="w-4 h-4 text-gray-500 group-hover:text-green-400 transition-colors flex-shrink-0 ml-2" />
                           </motion.a>
                         ))}
                     </div>
@@ -339,6 +437,47 @@ export default function OSINTPage() {
                     </div>
                   </details>
                 )}
+
+                {/* Web Intelligence (Tavily Results) */}
+                {results.webResults && results.webResults.length > 0 && (
+                  <div className="p-6 rounded-2xl bg-white/5 border border-white/10">
+                    <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                      <Globe className="w-5 h-5 text-purple-400" />
+                      Web Intelligence ({results.webResults.length})
+                    </h3>
+                    <div className="space-y-3">
+                      {results.webResults.map((result, index) => (
+                        <motion.a
+                          key={result.url}
+                          href={result.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: index * 0.05 }}
+                          className="block p-4 rounded-xl bg-purple-500/5 border border-purple-500/20 hover:bg-purple-500/10 transition-all group"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="font-medium text-white group-hover:text-purple-300 transition-colors">
+                                {result.title}
+                              </div>
+                              <div className="text-xs text-purple-400/70 truncate mt-1" title={result.url}>
+                                {result.url}
+                              </div>
+                              {result.snippet && (
+                                <p className="text-sm text-gray-400 mt-2 line-clamp-2">
+                                  {result.snippet}
+                                </p>
+                              )}
+                            </div>
+                            <ExternalLink className="w-4 h-4 text-gray-500 group-hover:text-purple-400 transition-colors flex-shrink-0 mt-1" />
+                          </div>
+                        </motion.a>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -353,12 +492,16 @@ export default function OSINTPage() {
             className="grid md:grid-cols-2 gap-6"
           >
             <div className="p-8 rounded-2xl bg-white/5 border border-white/10 text-center">
-              <Search className="w-12 h-12 text-gray-600 mx-auto mb-4" />
+              <Target className="w-12 h-12 text-gray-600 mx-auto mb-4" />
               <h3 className="text-lg font-semibold text-white mb-2">Start Your Investigation</h3>
-              <p className="text-gray-400">
+              <p className="text-gray-400 mb-4">
                 Enter a username, email, phone number, or domain above to begin gathering
                 intelligence from open sources.
               </p>
+              <div className="flex items-center justify-center gap-2 text-sm text-primary">
+                <Sparkles className="w-4 h-4" />
+                <span>Powered by AI • 20+ Platforms • Tavily Search</span>
+              </div>
             </div>
 
             <div className="space-y-4">

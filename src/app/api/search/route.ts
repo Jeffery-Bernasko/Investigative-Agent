@@ -4,6 +4,9 @@ import { entities, reports, vectors, userSettings } from "@/lib/db/schema";
 import { eq, ilike, or, desc, sql } from "drizzle-orm";
 import OpenAI from "openai";
 
+// Create Ollama client
+import { createOllamaClient } from "@/lib/ai/ollama-adapter";
+
 // Create Azure OpenAI client using OpenAI SDK
 function createAzureClient(endpoint: string, apiKey: string, deploymentName: string, apiVersion: string): OpenAI {
   return new OpenAI({
@@ -21,6 +24,24 @@ async function getEmbedding(
 ): Promise<number[] | null> {
   if (!userId) {
     // Try environment variable
+
+     if (process.env.OLLAMA_BASE_URL) {
+    try {
+      const client = createOllamaClient({
+        baseUrl: process.env.OLLAMA_BASE_URL,
+        model: "nomic-embed-text",
+      });
+      
+      const response = await client.embeddings.create({
+        input: text,
+      });
+      
+      return response.data[0]?.embedding || null;
+    } catch (error) {
+      console.error("Ollama embedding failed:", error);
+      // Fall through to other options
+    }
+  }
     if (process.env.OPENAI_API_KEY) {
       const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
       const response = await client.embeddings.create({

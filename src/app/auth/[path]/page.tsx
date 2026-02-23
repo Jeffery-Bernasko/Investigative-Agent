@@ -1,6 +1,6 @@
 "use client";
 
-import { AuthView } from "@neondatabase/neon-js/auth/react/ui";
+//import { AuthView } from "@neondatabase/neon-js/auth/react/ui";
 import Link from "next/link";
 import { Shield, Lock, Zap, Check, Mail, ArrowRight, Sparkles } from "lucide-react";
 import { useParams, useSearchParams } from "next/navigation";
@@ -9,6 +9,8 @@ import { OTPInput } from "@/components/auth/otp-input";
 import { authClient } from "@/lib/auth/client";
 import { SignInWrapper } from "@/components/auth/sign-in-wrapper";
 import { EmailVerificationInterceptor } from "@/components/auth/email-verification-interceptor";
+
+import { AuthForm } from "@/components/auth/auth-form";
 
 // Line pattern background component (consistent with landing page)
 function LinePatternBackground() {
@@ -225,13 +227,9 @@ export default function AuthPage() {
                   </div>
 
                   {/* Neon Auth View component with email verification check and error interception */}
-                  <EmailVerificationInterceptor>
-                    <SignInWrapper>
-                      <div className="neon-auth-container">
-                        <AuthView path={path} />
-                      </div>
-                    </SignInWrapper>
-                  </EmailVerificationInterceptor>
+                  <div className="neon-auth-container">
+                    <AuthForm mode={isSignUp ? "sign-up" : "sign-in"} />
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -331,13 +329,9 @@ export default function AuthPage() {
                   </div>
 
                   {/* Neon Auth View component - wrapped with verification checks */}
-                  <EmailVerificationInterceptor>
-                    <SignInWrapper>
-                      <div className="neon-auth-container">
-                        <AuthView path={path} />
-                      </div>
-                    </SignInWrapper>
-                  </EmailVerificationInterceptor>
+                  <div className="neon-auth-container">
+                    <AuthForm mode={isSignUp ? "sign-up" : "sign-in"} />
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -406,7 +400,7 @@ export default function AuthPage() {
                   />
                 ) : (
                   <div className="neon-auth-container">
-                    <AuthView path={path} />
+                    <AuthForm mode={isSignUp ? "sign-up" : "sign-in"} />
                   </div>
                 )}
               </div>

@@ -142,6 +142,10 @@ export const userSettings = pgTable('user_settings', {
   
   // OpenAI Direct (fallback)
   openaiApiKey: text('openai_api_key'),
+
+  //Ollama Settings
+  ollamaBaseUrl: text('ollama_base_url'),
+  ollamaModel: text('ollama_model'),
   
   // OSINT API Keys
   hunterApiKey: text('hunter_api_key'),

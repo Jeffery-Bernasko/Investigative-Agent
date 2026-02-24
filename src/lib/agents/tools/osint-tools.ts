@@ -8,6 +8,21 @@ function cleanUsername(username: string): string {
   return username.replace(/^@/, '').trim().toLowerCase();
 }
 
+// Helper: Check whether a discovered username is plausibly related to the target name
+function isUsernameRelevant(username: string, targetName: string): boolean {
+  const nameParts = targetName.toLowerCase().split(/\s+/).filter(p => p.length >= 2);
+  const lowerUsername = username.toLowerCase().replace(/[-_.]/g, "");
+
+  // Check if any part of the target name appears in the username
+  const hasNamePart = nameParts.some(part => lowerUsername.includes(part));
+
+  // Check if username is a concatenation/variation of the name parts
+  const concatenated = nameParts.join("");
+  const isVariation = lowerUsername.includes(concatenated) || concatenated.includes(lowerUsername);
+
+  return hasNamePart || isVariation;
+}
+
 // Helper: Validate profile content to reduce false positives
 async function validateProfile(
   url: string,
@@ -90,22 +105,9 @@ async function validateProfile(
         return { exists: false, confidence: "low" };
 
       case "Instagram":
-        if (
-          lowerHtml.includes("sorry, this page isn't available") ||
-          lowerHtml.includes("page not found") ||
-          lowerHtml.includes("page you requested was not found") ||
-          lowerHtml.includes("this page is not available")
-        ) {
-          return { exists: false, confidence: "low" };
-        }
-        // Instagram blocks scrapers heavily — require BOTH username AND profile indicators
-        if (
-          lowerHtml.includes(lowerUsername) &&
-          (lowerHtml.includes("posts") || lowerHtml.includes("followers"))
-        ) {
-          return { exists: true, confidence: "medium" };
-        }
-        // Don't trust 200 status alone — Instagram returns 200 for non-existent profiles
+        // Instagram aggressively blocks non-browser requests with login walls.
+        // Direct fetch validation is unreliable — always returns false.
+        // Real Instagram profiles should be discovered via Tavily web search instead.
         return { exists: false, confidence: "low" };
 
       case "Facebook":
@@ -596,7 +598,14 @@ export async function searchPersonByName(
       }
 
       if (platform !== "Other") {
+        if (username && !isUsernameRelevant(username, fullName)) {
+          console.log(`    ⏭️ Skipping unrelated username: "${username}" (not related to "${fullName}")`);
+          continue;
+        }
         console.log(`    ✅ Tavily found ${platform}: ${result.url}${username ? ` (username: ${username})` : ""}`);
+        if (username) {
+          discoveredUsernames.add(username.toLowerCase());
+        }
         discoveredProfiles.push({
           platform,
           url: result.url,
@@ -604,7 +613,6 @@ export async function searchPersonByName(
           confidence: "high",
           checkedAt: new Date(),
         });
-        if (username) discoveredUsernames.add(username.toLowerCase());
       }
     }
     console.log(`    📊 Tavily discovered ${discoveredProfiles.length} profiles\n`);
@@ -643,11 +651,6 @@ export async function searchPersonByName(
   } catch (error) {
     console.log(`    ⚠️ GitHub API error: ${error instanceof Error ? error.message : error}\n`);
   }
-
-  // PHASE 2: VERIFICATION — check discovered usernames
-
-  const fakeName = fullName.toLowerCase().replace(/\s+/g, "");
-  discoveredUsernames.delete(fakeName);
 
   console.log(`🔎 Phase 2: Verifying ${discoveredUsernames.size} discovered usernames...\n`);
 

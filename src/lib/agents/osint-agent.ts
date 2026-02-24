@@ -8,7 +8,7 @@ import { Task, AgentResult } from "./types";
 import { gatherEmailIntelligence } from "./tools/email-intel";
 import { gatherDomainIntelligence } from "./tools/domain-intel";
 import { gatherPhoneIntelligence } from "./tools/phone-intel";
-import { searchUsername } from "./tools/osint-tools";
+import { searchUsername, searchPersonByName } from "./tools/osint-tools";
 
 export class OsintAgent extends BaseAgent {
   async execute(task: Task): Promise<AgentResult> {
@@ -50,9 +50,14 @@ export class OsintAgent extends BaseAgent {
         this.log("Detected phone number");
         results.phone = await gatherPhoneIntelligence(task.target);
       }
+      // Check if target is a person name (contains spaces)
+      else if (task.metadata?.targetType === "person" || task.target.includes(" ")) {
+        this.log("Detected person name — using name-first search");
+        results.username = await searchPersonByName(task.target);
+      }
       // Default to username search
       else {
-        this.log("Detected username/person");
+        this.log("Detected username");
         results.username = await searchUsername(task.target);
       }
 

@@ -9,15 +9,11 @@ import {
   OsintFindings,
 } from "./types";
 import {
-  searchUsername,
-  searchWithTavily,
   createEntity,
   getEntityByName,
   storeOsintFindings,
   calculateRiskScore,
   generateInsights,
-  extractEmails,
-  extractDomains,
 } from "./tools/osint-tools";
 import { OsintAgent } from "./osint-agent";
 
@@ -56,35 +52,6 @@ function getSafeErrorInfo(error: unknown): SafeErrorInfo {
   }
 }
 
-// Helper: Detect if query is a person name vs username
-function parseSearchQuery(query: string): {
-  type: "username" | "person";
-  cleanedQuery: string;
-  suggestedUsername?: string;
-} {
-  const trimmed = query.trim();
-
-  if (trimmed.startsWith("@")) {
-    return {
-      type: "username",
-      cleanedQuery: trimmed.replace(/^@/, "").toLowerCase(), // Future check without converting to lowercase
-    };
-  }
-
-  if (trimmed.includes(" ")) {
-    const suggested = trimmed.toLowerCase().replace(/\s+/g, "");
-    return {
-      type: "person",
-      cleanedQuery: trimmed,
-      suggestedUsername: suggested,
-    };
-  }
-
-  return {
-    type: "username",
-    cleanedQuery: trimmed.toLowerCase(),
-  };
-}
 export class OrchestratorAgent {
   private llm: OllamaClient;
   private db: any;
@@ -218,6 +185,7 @@ Examples:
 "Investigate Elon Musk" → {"target":"Elon Musk","targetType":"person","intent":"investigate","scope":"standard"}
 "Search @johndoe" → {"target":"johndoe","targetType":"username","intent":"search","scope":"standard"}
 "Deep scan example.com" → {"target":"example.com","targetType":"domain","intent":"investigate","scope":"deep"}
+"Analyze user@mail.com" → {"target":"user@mail.com","targetType":"email","intent":"analyze","scope":"standard"}
 
 Respond with ONLY a JSON object, no other text:`;
 
@@ -241,9 +209,9 @@ Respond with ONLY a JSON object, no other text:`;
     const jsonString = jsonMatch ? jsonMatch[0] : content;
     const parsed = JSON.parse(jsonString);
 
-    if (parsed.targetType === "person" && !parsed.metadata?.suggestedUsername) {
-      const username = parsed.target.toLowerCase().replace(/\s+/g, '');
-      parsed.metadata = { ...parsed.metadata, suggestedUsername: username };
+    // Strip any suggestedUsername from metadata — name-first search handles discovery
+    if (parsed.metadata?.suggestedUsername) {
+      delete parsed.metadata.suggestedUsername;
     }
     return IntentSchema.parse(parsed);
   }
@@ -336,12 +304,8 @@ Respond with ONLY a JSON object:`;
     // Determine the target to investigate
     let targetToInvestigate = intent.target;
 
-    // For person names, use suggested username or known mapping
     if (intent.targetType === "person") {
-      const parsed = parseSearchQuery(intent.target);
-      //const knownUsername = KNOWN_USERNAMES[intent.target.toLowerCase()];
-      targetToInvestigate = parsed.suggestedUsername || intent.target;
-      console.log(`👤 Person detected: "${intent.target}" → using username: "${targetToInvestigate}"`);
+      console.log(`👤 Person detected: "${intent.target}" → using name-first search strategy`);
     }
 
     // Use OSINT Agent to gather intelligence
@@ -361,10 +325,10 @@ Respond with ONLY a JSON object:`;
     // Process OSINT Agent results
     const agentData = osintResult.data;
 
-    // Username results
+    // Username/Person results
     if (agentData.username) {
       findings.profiles = agentData.username.profiles || [];
-      console.log(`✅ Username: Found ${findings.profiles.length} profiles`);
+      console.log(`✅ Found ${findings.profiles.length} profiles`);
     }
 
     // Email results
@@ -394,7 +358,7 @@ Respond with ONLY a JSON object:`;
       console.log(`  ✅ Domain: SSL=${agentData.domain.ssl.valid}, DNS=${agentData.domain.dns.a.length} A records`);
     }
 
-    // Phone results,, add more metadata for number using APIs
+    // Phone results
     if (agentData.phone) {
       findings.metadata.phoneIntel = {
         valid: agentData.phone.isValid,
@@ -402,59 +366,6 @@ Respond with ONLY a JSON object:`;
         format: agentData.phone.format.international,
       };
       console.log(`  ✅ Phone: Valid=${agentData.phone.isValid}, Country=${agentData.phone.country?.name}`);
-    }
-
-    // For person names, also do Tavily search
-    if (intent.targetType === "person") {
-      console.log(`\n🌐 Enriching person search with Tavily...`);
-      const tavilyKey = process.env.TAVILY_API_KEY;
-      if (tavilyKey) {
-        const nameResults = await searchWithTavily(
-          `"${intent.target}" social media profile site:x.com OR site:linkedin.com OR site:instagram.com OR site:github.com OR site:facebook.com`,
-          tavilyKey
-        );
-
-        nameResults.forEach((result) => {
-          const url = result.url.toLowerCase();
-          let platform = "Other";
-          let profileUrl = result.url;
-
-          if (url.includes("x.com/")) {
-            platform = "X";
-            const match = url.match(/(?:twitter\.com|x\.com)\/([^\/\?]+)/);
-            if (match) profileUrl = `https://x.com/${match[1]}`;
-          } else if (url.includes("linkedin.com/in/")) {
-            platform = "LinkedIn";
-            profileUrl = result.url;
-          } else if (url.includes("instagram.com/")) {
-            platform = "Instagram";
-            const match = url.match(/instagram\.com\/([^\/\?]+)/);
-            if (match) profileUrl = `https://instagram.com/${match[1]}`;
-          } else if (url.includes("github.com/")) {
-            platform = "GitHub";
-            const match = url.match(/github\.com\/([^\/\?]+)/);
-            if (match) profileUrl = `https://github.com/${match[1]}`;
-          } else if (url.includes("facebook.com/")) {
-            platform = "Facebook";
-            profileUrl = result.url;
-          }
-
-          const existing = findings.profiles.find(p => p.platform === platform);
-          if (!existing && platform !== "Other") {
-            console.log(`  ✨ Found ${platform} via name search`);
-            findings.profiles.push({
-              platform,
-              url: profileUrl,
-              found: true,
-              confidence: "high",
-            });
-          } else if (existing && existing.confidence !== "high") {
-            console.log(`  ⬆️ Upgraded ${platform} to high confidence`);
-            existing.confidence = "high";
-            existing.url = profileUrl;
-          }
-        });
-      }
     }
 
     // Statistics

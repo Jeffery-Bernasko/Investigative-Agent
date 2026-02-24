@@ -22,7 +22,7 @@ export const PlanStepSchema = z.object({
   step: z.number().describe("Step number in sequence"),
   action: z.string().describe("What action to take"),
   tool: z.string().describe("Which tool/function to use"),
-  priority: z.number().min(1).max(3).describe("Priority level (1=highest)"),
+  priority: z.number().min(1).describe("Priority level (1=highest)"),
 });
 
 export const InvestigationPlanSchema = z.object({

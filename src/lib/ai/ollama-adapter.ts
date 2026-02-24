@@ -19,15 +19,61 @@ export interface EmbeddingParams {
 }
 
 /**
- * Ollama client that mimics OpenAI SDK interface
+ * Ollama client that mimics OpenAI SDK interface.
+ * 
+ * - Uses keep_alive=30m to keep models loaded in memory between requests.
+ * - Uses 300s timeout to handle model cold-loading on first request.
+ * - Provides a warmup() method to pre-load the model.
  */
 export class OllamaClient {
   private baseUrl: string;
   private model: string;
 
+  // How long Ollama should keep the model in memory after each request
+  private keepAlive = '30m';
+
+  // Timeout for requests (300s allows for cold-start model loading)
+  private requestTimeoutMs = 300_000;
+
   constructor(config: OllamaConfig) {
     this.baseUrl = config.baseUrl;
     this.model = config.model;
+  }
+
+  /**
+   * Pre-load the model into memory so subsequent calls are fast (~1-2s).
+   * Call this once at startup to avoid cold-start delays on the first real request.
+   */
+  async warmup(): Promise<void> {
+    try {
+      console.log(`🔥 Warming up Ollama model "${this.model}"...`);
+      const start = Date.now();
+      const response = await fetch(`${this.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(this.requestTimeoutMs),
+        body: JSON.stringify({
+          model: this.model,
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: false,
+          keep_alive: this.keepAlive,
+          options: { num_predict: 1 }, // Generate only 1 token — we just want to trigger model loading
+        }),
+      });
+
+      if (!response.ok) {
+        console.warn(`⚠️ Ollama warmup returned ${response.status}: ${response.statusText}`);
+        return;
+      }
+
+      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+      console.log(`✅ Ollama model "${this.model}" warm and ready (${elapsed}s)`);
+    } catch (error) {
+      console.warn(
+        '⚠️ Ollama warmup failed (model may cold-start on first request):',
+        error instanceof Error ? error.message : error
+      );
+    }
   }
 
   /**
@@ -40,11 +86,12 @@ export class OllamaClient {
           const response = await fetch(`${this.baseUrl}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            signal: AbortSignal.timeout(120_000), // 120s timeout for model cold-start
+            signal: AbortSignal.timeout(this.requestTimeoutMs),
             body: JSON.stringify({
               model: this.model,
               messages: params.messages,
               stream: false,
+              keep_alive: this.keepAlive,
               options: {
                 temperature: params.temperature || 0.7,
                 num_predict: params.max_tokens || 2048,
@@ -86,10 +133,11 @@ export class OllamaClient {
         const response = await fetch(`${this.baseUrl}/api/embeddings`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          signal: AbortSignal.timeout(120_000), // 120s timeout
+          signal: AbortSignal.timeout(this.requestTimeoutMs),
           body: JSON.stringify({
             model: this.model,
             prompt: params.input,
+            keep_alive: this.keepAlive,
           }),
         });
 

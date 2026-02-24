@@ -19,8 +19,7 @@ import {
   extractEmails,
   extractDomains,
 } from "./tools/osint-tools";
-import { OsintAgent } from "./osint-agent"; // ADD THIS
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { OsintAgent } from "./osint-agent";
 
 type SafeErrorInfo = {
   name: string;
@@ -122,6 +121,8 @@ export class OrchestratorAgent {
 
     try {
 
+      // Warmup: pre-load Ollama model into memory (handles cold-start)
+      await this.llm.warmup();
 
       // Step 1: Parse user intent
       console.log(`📝 Step 1: Parsing user intent...`);
@@ -216,42 +217,28 @@ export class OrchestratorAgent {
   }
 
   private async parseIntentWithLLM(userInput: string): Promise<Intent> {
-    const prompt = `
-You are an intent parser for OSINT investigations. Parse the following user request and extract:
-
-1. **target**: The specific entity to investigate
-   - If it's a username (starts with @), return JUST the username without @
-   - If it's a person's name (like "Elon Musk"), return the name as-is
-   - If it's an email, return the email
-   - If it's a domain, return the domain
-   - If it's an IP, return the IP
-   - If it's a phone number, return the phone number
-
-2. **targetType**: One of: "username", "email", "domain", "ip", "person", "organization", "phone number"
-   - Use "username" if input starts with @ or looks like a single-word handle
-   - Use "person" if input is a person's full name (like "Elon Musk")
-   - Use "email" if it contains @domain.com format
-   - Use "domain" if it's a website address
-   - Use "organization" if it's a company name
-   - Use "phone number" if it contains + format
-
-3. **intent**: One of: "investigate", "monitor", "analyze", "search"
-   - Default to "investigate"
-
-4. **scope**: One of: "quick" (5 min), "standard" (15 min), "deep" (1+ hour)
-   - Default to "standard"
+    const prompt = `Parse this OSINT investigation request and extract the target entity.
 
 User request: "${userInput}"
 
-Respond ONLY with valid JSON:
-${JSON.stringify(zodToJsonSchema(IntentSchema), null, 2)}
-`;
+Rules:
+- target: The entity to investigate (name, username, email, domain, or IP)
+- targetType: one of "username", "email", "domain", "ip", "person", "organization"
+- intent: one of "investigate", "monitor", "analyze", "search" (default: "investigate")
+- scope: one of "quick", "standard", "deep" (default: "standard")
+
+Examples:
+"Investigate Elon Musk" → {"target":"Elon Musk","targetType":"person","intent":"investigate","scope":"standard"}
+"Search @johndoe" → {"target":"johndoe","targetType":"username","intent":"search","scope":"standard"}
+"Deep scan example.com" → {"target":"example.com","targetType":"domain","intent":"investigate","scope":"deep"}
+
+Respond with ONLY a JSON object, no other text:`;
 
     const response = await this.llm.chat.completions.create({
       messages: [
         {
           role: "system",
-          content: "You are a JSON-only intent parser. Output valid JSON with no other text.",
+          content: "You output only valid JSON. No markdown, no explanation, no code fences.",
         },
         {
           role: "user",
@@ -259,6 +246,7 @@ ${JSON.stringify(zodToJsonSchema(IntentSchema), null, 2)}
         },
       ],
       temperature: 0.1,
+      max_tokens: 200,
     });
 
     const content = response.choices[0].message.content || "{}";
@@ -282,12 +270,13 @@ ${JSON.stringify(zodToJsonSchema(IntentSchema), null, 2)}
 
     // Strip common prefixes like "Investigate ", "Search for ", "Analyze ", "Monitor "
     const intentPatterns: { pattern: RegExp; intent: Intent["intent"] }[] = [
-      { pattern: /^investigate\s+/i, intent: "investigate" },
-      { pattern: /^monitor\s+/i, intent: "monitor" },
-      { pattern: /^analyze\s+/i, intent: "analyze" },
-      { pattern: /^search(?:\s+for)?\s+/i, intent: "search" },
-      { pattern: /^look\s+(?:up|into)\s+/i, intent: "investigate" },
-      { pattern: /^find\s+/i, intent: "search" },
+      { pattern: /^investigate\s+(?:on\s+|about\s+|into\s+)?/i, intent: "investigate" },
+      { pattern: /^monitor\s+(?:on\s+|about\s+)?/i, intent: "monitor" },
+      { pattern: /^analyze\s+(?:on\s+|about\s+)?/i, intent: "analyze" },
+      { pattern: /^search(?:\s+for)?\s+(?:on\s+|about\s+)?/i, intent: "search" },
+      { pattern: /^look\s+(?:up|into)\s+(?:on\s+|about\s+)?/i, intent: "investigate" },
+      { pattern: /^find\s+(?:on\s+|about\s+)?/i, intent: "search" },
+      { pattern: /^(?:run|do|perform)\s+(?:a\s+|an\s+)?(?:investigation|search|scan|analysis)\s+(?:on\s+|about\s+|of\s+|for\s+)?/i, intent: "investigate" },
     ];
 
     let intent: Intent["intent"] = "investigate";
@@ -372,33 +361,25 @@ ${JSON.stringify(zodToJsonSchema(IntentSchema), null, 2)}
   }
 
   private async createPlanWithLLM(intent: Intent): Promise<InvestigationPlan> {
-    const prompt = `
-Create an investigation plan for the following target:
+    const prompt = `Create a step-by-step investigation plan.
 
 Target: ${intent.target}
 Type: ${intent.targetType}
 Intent: ${intent.intent}
 Scope: ${intent.scope}
 
-Available agents and tools:
-1. OSINT Agent - Comprehensive data gathering (username, email, domain, phone)
-2. searchUsername - Search for username across platforms
-3. extractEmails - Extract email addresses
-4. extractDomains - Extract domain names
-5. calculateRisk - Calculate risk score
-6. generateInsights - Generate insights
+Available tools: osint-agent, searchUsername, extractEmails, extractDomains, calculateRisk, generateInsights
 
-Create a step-by-step plan.
+Example response format:
+{"steps":[{"step":1,"action":"Search username across platforms","tool":"searchUsername","priority":1},{"step":2,"action":"Extract emails","tool":"extractEmails","priority":2}],"estimatedDuration":"15 minutes"}
 
-Respond ONLY with valid JSON:
-${JSON.stringify(zodToJsonSchema(InvestigationPlanSchema), null, 2)}
-`;
+Respond with ONLY a JSON object:`;
 
     const response = await this.llm.chat.completions.create({
       messages: [
         {
           role: "system",
-          content: "You are a JSON-only investigation planner. Output valid JSON.",
+          content: "You output only valid JSON. No markdown, no explanation, no code fences.",
         },
         {
           role: "user",
@@ -406,6 +387,7 @@ ${JSON.stringify(zodToJsonSchema(InvestigationPlanSchema), null, 2)}
         },
       ],
       temperature: 0.2,
+      max_tokens: 500,
     });
 
     const content = response.choices[0].message.content || "{}";
@@ -622,22 +604,6 @@ ${JSON.stringify(zodToJsonSchema(InvestigationPlanSchema), null, 2)}
     intent: Intent,
     riskScore: number
   ): Promise<string> {
-    try {
-      return await this.generateSummaryWithLLM(findings, intent, riskScore);
-    } catch (error) {
-      console.warn(
-        `⚠️ LLM summary generation failed, using template fallback:`,
-        error instanceof Error ? error.message : error
-      );
-      return this.fallbackGenerateSummary(findings, intent, riskScore);
-    }
-  }
-
-  private async generateSummaryWithLLM(
-    findings: OsintFindings,
-    intent: Intent,
-    riskScore: number
-  ): Promise<string> {
     const prompt = `
 Generate a concise executive summary for this OSINT investigation:
 
@@ -661,7 +627,7 @@ Provide a 2-3 sentence summary highlighting key findings and risks.
       messages: [
         {
           role: "system",
-          content: "You are an investigative analyst writing executive summaries.",
+          content: "You are a investigative analyst writing executive summaries.", // Change to investigative analyst
         },
         {
           role: "user",
@@ -672,30 +638,6 @@ Provide a 2-3 sentence summary highlighting key findings and risks.
     });
 
     return response.choices[0].message.content || "No summary available.";
-  }
-
-  private fallbackGenerateSummary(
-    findings: OsintFindings,
-    intent: Intent,
-    riskScore: number
-  ): string {
-    const platforms = findings.profiles.filter(p => p.found).map(p => p.platform);
-    const riskLevel = riskScore >= 7 ? "HIGH" : riskScore >= 4 ? "MEDIUM" : "LOW";
-
-    let summary = `OSINT investigation of ${intent.targetType} "${intent.target}" identified ${findings.profiles.length} profiles across ${platforms.length > 0 ? platforms.join(", ") : "no platforms"}.`;
-
-    if (findings.emails.length > 0) {
-      summary += ` ${findings.emails.length} email address(es) discovered.`;
-    }
-    if (findings.metadata.emailIntel?.breaches > 0) {
-      summary += ` WARNING: ${findings.metadata.emailIntel.breaches} data breach(es) detected.`;
-    }
-    if (findings.metadata.domainIntel?.shodanVulns > 0) {
-      summary += ` ${findings.metadata.domainIntel.shodanVulns} domain vulnerability(ies) found.`;
-    }
-
-    summary += ` Overall risk assessment: ${riskLevel} (${riskScore}/10).`;
-    return summary;
   }
 
   private async generateRecommendations(

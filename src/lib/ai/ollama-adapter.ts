@@ -91,6 +91,7 @@ export class OllamaClient {
               model: this.model,
               messages: params.messages,
               stream: false,
+              format: 'json',
               keep_alive: this.keepAlive,
               options: {
                 temperature: params.temperature || 0.7,

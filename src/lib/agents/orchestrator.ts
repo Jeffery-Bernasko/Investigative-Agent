@@ -204,19 +204,6 @@ export class OrchestratorAgent {
   }
 
   private async parseIntent(userInput: string): Promise<Intent> {
-    // Try LLM-based parsing first, fall back to deterministic parsing
-    try {
-      return await this.parseIntentWithLLM(userInput);
-    } catch (error) {
-      console.warn(
-        `⚠️ LLM intent parsing failed, using deterministic fallback:`,
-        error instanceof Error ? error.message : error
-      );
-      return this.fallbackParseIntent(userInput);
-    }
-  }
-
-  private async parseIntentWithLLM(userInput: string): Promise<Intent> {
     const prompt = `Parse this OSINT investigation request and extract the target entity.
 
 User request: "${userInput}"
@@ -261,106 +248,7 @@ Respond with ONLY a JSON object, no other text:`;
     return IntentSchema.parse(parsed);
   }
 
-  /**
-   * Deterministic fallback parser — used when Ollama is unreachable or returns invalid JSON.
-   * Extracts target, targetType, intent, and scope from the raw query using regex/heuristics.
-   */
-  private fallbackParseIntent(userInput: string): Intent {
-    const trimmed = userInput.trim();
-
-    // Strip common prefixes like "Investigate ", "Search for ", "Analyze ", "Monitor "
-    const intentPatterns: { pattern: RegExp; intent: Intent["intent"] }[] = [
-      { pattern: /^investigate\s+(?:on\s+|about\s+|into\s+)?/i, intent: "investigate" },
-      { pattern: /^monitor\s+(?:on\s+|about\s+)?/i, intent: "monitor" },
-      { pattern: /^analyze\s+(?:on\s+|about\s+)?/i, intent: "analyze" },
-      { pattern: /^search(?:\s+for)?\s+(?:on\s+|about\s+)?/i, intent: "search" },
-      { pattern: /^look\s+(?:up|into)\s+(?:on\s+|about\s+)?/i, intent: "investigate" },
-      { pattern: /^find\s+(?:on\s+|about\s+)?/i, intent: "search" },
-      { pattern: /^(?:run|do|perform)\s+(?:a\s+|an\s+)?(?:investigation|search|scan|analysis)\s+(?:on\s+|about\s+|of\s+|for\s+)?/i, intent: "investigate" },
-    ];
-
-    let intent: Intent["intent"] = "investigate";
-    let remaining = trimmed;
-
-    for (const { pattern, intent: matchedIntent } of intentPatterns) {
-      if (pattern.test(remaining)) {
-        intent = matchedIntent;
-        remaining = remaining.replace(pattern, "").trim();
-        break;
-      }
-    }
-
-    // Detect scope hints
-    let scope: Intent["scope"] = "standard";
-    if (/\b(quick|fast|brief)\b/i.test(remaining)) {
-      scope = "quick";
-      remaining = remaining.replace(/\b(quick|fast|brief)\b/i, "").trim();
-    } else if (/\b(deep|thorough|comprehensive|full)\b/i.test(remaining)) {
-      scope = "deep";
-      remaining = remaining.replace(/\b(deep|thorough|comprehensive|full)\b/i, "").trim();
-    }
-
-    // Clean up trailing punctuation and extra spaces
-    remaining = remaining.replace(/[.!?]+$/, "").replace(/\s+/g, " ").trim();
-
-    // Detect target type
-    let target = remaining;
-    let targetType: Intent["targetType"];
-    const metadata: { suggestedUsername?: string; alternativeNames?: string[] } = {};
-
-    // Email: user@domain.com
-    const emailMatch = remaining.match(/[\w.+-]+@[\w.-]+\.\w{2,}/);
-    if (emailMatch) {
-      target = emailMatch[0];
-      targetType = "email";
-    }
-    // IP address: 1.2.3.4
-    else if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(remaining)) {
-      targetType = "ip";
-    }
-    // Domain: example.com (no spaces, has a dot, no @)
-    else if (/^[\w.-]+\.\w{2,}$/.test(remaining) && !remaining.includes("@") && !remaining.includes(" ")) {
-      targetType = "domain";
-    }
-    // Username: starts with @
-    else if (remaining.startsWith("@")) {
-      target = remaining.slice(1);
-      targetType = "username";
-    }
-    // Person name: contains spaces (multi-word)
-    else if (remaining.includes(" ")) {
-      targetType = "person";
-      metadata.suggestedUsername = remaining.toLowerCase().replace(/\s+/g, "");
-    }
-    // Single word: treat as username
-    else {
-      targetType = "username";
-    }
-
-    console.log(`📋 Fallback parser result: target="${target}", type="${targetType}", intent="${intent}", scope="${scope}"`);
-
-    return IntentSchema.parse({
-      target,
-      targetType,
-      intent,
-      scope,
-      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
-    });
-  }
-
   private async createPlan(intent: Intent): Promise<InvestigationPlan> {
-    try {
-      return await this.createPlanWithLLM(intent);
-    } catch (error) {
-      console.warn(
-        `⚠️ LLM plan creation failed, using deterministic fallback:`,
-        error instanceof Error ? error.message : error
-      );
-      return this.fallbackCreatePlan(intent);
-    }
-  }
-
-  private async createPlanWithLLM(intent: Intent): Promise<InvestigationPlan> {
     const prompt = `Create a step-by-step investigation plan.
 
 Target: ${intent.target}
@@ -397,44 +285,40 @@ Respond with ONLY a JSON object:`;
     return InvestigationPlanSchema.parse(parsed);
   }
 
-  private fallbackCreatePlan(intent: Intent): InvestigationPlan {
-    const baseSteps = [
-      { step: 1, action: `Gather OSINT data for ${intent.targetType}: ${intent.target}`, tool: "osint-agent", priority: 1 },
-      { step: 2, action: "Search username across platforms", tool: "searchUsername", priority: 1 },
-      { step: 3, action: "Extract associated emails", tool: "extractEmails", priority: 2 },
-      { step: 4, action: "Extract associated domains", tool: "extractDomains", priority: 2 },
-      { step: 5, action: "Calculate risk score", tool: "calculateRisk", priority: 1 },
-      { step: 6, action: "Generate insights and recommendations", tool: "generateInsights", priority: 1 },
-    ];
-
-    const durationMap = { quick: "5 minutes", standard: "15 minutes", deep: "60+ minutes" };
-
-    console.log(`📋 Fallback plan created with ${baseSteps.length} steps`);
-    return InvestigationPlanSchema.parse({
-      steps: baseSteps,
-      estimatedDuration: durationMap[intent.scope] || "15 minutes",
-    });
-  }
-
   private async prepareEntity(intent: Intent, userId: string) {
-    const existing = await getEntityByName(intent.target, userId);
+    try {
+      const existing = await getEntityByName(intent.target, userId);
 
-    if (existing) {
-      console.log(`📦 Found existing entity: ${intent.target}`);
-      return existing;
+      if (existing) {
+        console.log(`📦 Found existing entity: ${intent.target}`);
+        return existing;
+      }
+
+      console.log(`✨ Creating new entity: ${intent.target}`);
+      return await createEntity({
+        name: intent.target,
+        type: intent.targetType,
+        userId,
+        metadata: {
+          source: "orchestrator",
+          intent: intent.intent,
+          scope: intent.scope,
+        },
+      });
+    } catch (error) {
+      console.warn(
+        `⚠️ DB entity operation failed, using in-memory entity:`,
+        error instanceof Error ? error.message : error
+      );
+      // Return a minimal in-memory entity so the investigation can proceed
+      return {
+        id: -1,
+        name: intent.target,
+        type: intent.targetType,
+        userId,
+        metadata: { source: "orchestrator-fallback" },
+      };
     }
-
-    console.log(`✨ Creating new entity: ${intent.target}`);
-    return await createEntity({
-      name: intent.target,
-      type: intent.targetType,
-      userId,
-      metadata: {
-        source: "orchestrator",
-        intent: intent.intent,
-        scope: intent.scope,
-      },
-    });
   }
 
   // NEW: Execute investigation using OSINT Agent

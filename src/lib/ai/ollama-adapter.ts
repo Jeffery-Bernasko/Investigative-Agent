@@ -40,6 +40,7 @@ export class OllamaClient {
           const response = await fetch(`${this.baseUrl}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(120_000), // 120s timeout for model cold-start
             body: JSON.stringify({
               model: this.model,
               messages: params.messages,
@@ -85,6 +86,7 @@ export class OllamaClient {
         const response = await fetch(`${this.baseUrl}/api/embeddings`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(120_000), // 120s timeout
           body: JSON.stringify({
             model: this.model,
             prompt: params.input,

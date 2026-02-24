@@ -2,6 +2,41 @@ import { NextRequest, NextResponse } from "next/server";
 import { OrchestratorAgent } from "@/lib/agents/orchestrator";
 import { auth } from "@/lib/auth";
 
+type SafeErrorInfo = {
+  name: string;
+  message: string;
+  stack?: string;
+};
+
+function getSafeErrorInfo(error: unknown): SafeErrorInfo {
+  try {
+    if (error instanceof Error) {
+      return {
+        name: error.name || "Error",
+        message: error.message || "Unknown error",
+        stack: error.stack,
+      };
+    }
+
+    if (typeof error === "string") {
+      return {
+        name: "Error",
+        message: error,
+      };
+    }
+
+    return {
+      name: "UnknownError",
+      message: "A non-Error value was thrown",
+    };
+  } catch {
+    return {
+      name: "UnknownError",
+      message: "Failed to parse thrown error safely",
+    };
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     // Get session
@@ -32,12 +67,17 @@ export async function POST(req: NextRequest) {
       success: true,
       investigation: result,
     });
-  } catch (error: any) {
-    console.error("Investigation API error:", error);
+  } catch (error: unknown) {
+    const err = getSafeErrorInfo(error);
+    console.error(`Investigation API error: ${err.name}: ${err.message}`);
+    if (err.stack) {
+      console.error(err.stack);
+    }
+
     return NextResponse.json(
       {
         error: "Investigation failed",
-        details: error.message,
+        details: err.message,
       },
       { status: 500 }
     );

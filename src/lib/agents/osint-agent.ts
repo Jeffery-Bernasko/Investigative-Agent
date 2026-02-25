@@ -2,13 +2,13 @@
  * OSINT Agent
  * Specialized autonomous agent for deep OSINT collection
  */
-
 import { BaseAgent, AgentConfig } from "./base-agents";
 import { Task, AgentResult } from "./types";
 import { gatherEmailIntelligence } from "./tools/email-intel";
 import { gatherDomainIntelligence } from "./tools/domain-intel";
 import { gatherPhoneIntelligence } from "./tools/phone-intel";
-import { searchUsername, searchPersonByName } from "./tools/osint-tools";
+import { searchUsername } from "./tools/username-search";
+import { searchPersonByName } from "./tools/person-search";
 
 export class OsintAgent extends BaseAgent {
   async execute(task: Task): Promise<AgentResult> {

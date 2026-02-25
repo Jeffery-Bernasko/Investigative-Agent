@@ -3,7 +3,8 @@ import { db } from "@/lib/db";
 import { osintSearches, userSettings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
-import { searchUsername, searchWithTavily } from "@/lib/agents/tools/osint-tools";
+import { searchUsername } from "@/lib/agents/tools/username-search";
+import { searchWithTavily } from "@/lib/agents/tools/tavily-search";
 import axios from "axios";
 
 
@@ -14,7 +15,7 @@ function parseSearchQuery(query: string): {
   suggestedUsername?: string;
 } {
   const trimmed = query.trim();
-  
+
   // If starts with @, it's definitely a username
   if (trimmed.startsWith("@")) {
     return {
@@ -22,7 +23,7 @@ function parseSearchQuery(query: string): {
       cleanedQuery: trimmed.replace(/^@/, "").toLowerCase(),
     };
   }
-  
+
   // If contains spaces, likely a person name
   if (trimmed.includes(" ")) {
     const suggested = trimmed.toLowerCase().replace(/\s+/g, "");
@@ -32,14 +33,13 @@ function parseSearchQuery(query: string): {
       suggestedUsername: suggested,
     };
   }
-  
+
   // Single word - treat as username
   return {
     type: "username",
     cleanedQuery: trimmed.toLowerCase(),
   };
 }
-
 
 // Rate limiting: simple in-memory store
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
@@ -147,7 +147,7 @@ async function searchEmail(email: string, apiKeys: { hunter?: string; hibp?: str
     const crypto = await import("crypto");
     const hash = crypto.createHash("md5").update(email.toLowerCase().trim()).digest("hex");
     const gravatarUrl = `https://www.gravatar.com/avatar/${hash}?d=404`;
-    
+
     const response = await fetch(gravatarUrl, { method: "HEAD" });
     const exists = response.ok;
 
@@ -323,7 +323,7 @@ async function searchPhone(phone: string): Promise<{
 export async function POST(request: NextRequest) {
   try {
     console.log("\n🔍 ===== OSINT SEARCH API =====");
-    
+
     const ip = request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "unknown";
 
     if (!checkRateLimit(ip)) {
@@ -340,7 +340,7 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const { searchType = "username", query, username } = body;
-    
+
     // Support both 'query' and 'username' parameters
     const searchQuery = query || username;
 
@@ -393,111 +393,111 @@ export async function POST(request: NextRequest) {
     const startTime = Date.now();
 
     switch (searchType) {
-  case "username": {
-    console.log("\n🔍 Starting username search...");
-    
-    // Parse the query to detect if it's a person name
-    const parsed = parseSearchQuery(searchQuery);
-    console.log(`📝 Query type: ${parsed.type}`);
-    
-    let usernameToSearch: string;
-    let profiles: any[] = [];
-    
-    if (parsed.type === "person") {
-      console.log(`👤 Detected person name: "${parsed.cleanedQuery}"`);
-      
-      // Check if we have a known username mapping
-      
-      
-        usernameToSearch = parsed.suggestedUsername || parsed.cleanedQuery;
-        console.log(`💡 Suggested username: ${usernameToSearch}`);
-      
-      
-      // Search with suggested username
-      const usernameResult = await searchUsername(usernameToSearch);
-      profiles = usernameResult.profiles;
-      
-      // Also do a Tavily search for the person's name to find more profiles
-      if (apiKeys.tavily) {
-        console.log(`\n🌐 Searching for person name via Tavily...`);
-        const nameResults = await searchWithTavily(
-          `"${parsed.cleanedQuery}" social media profile site:twitter.com OR site:linkedin.com OR site:instagram.com OR site:github.com`,
-          apiKeys.tavily
-        );
-        
-        console.log(`📊 Tavily found ${nameResults.length} person-name results`);
-        
-        // Extract usernames from Tavily results
-        nameResults.forEach((result) => {
-          const url = result.url.toLowerCase();
-          let platform = "Other";
-          let extractedUrl = result.url;
-          let confidence: "high" | "medium" | "low" = "high";
-          
-          // Extract username from URL
-          if (url.includes("twitter.com/") || url.includes("x.com/")) {
-            platform = "Twitter";
-            const match = url.match(/(?:twitter\.com|x\.com)\/([^\/\?]+)/);
-            if (match) extractedUrl = `https://twitter.com/${match[1]}`;
-          } else if (url.includes("linkedin.com/in/")) {
-            platform = "LinkedIn";
-            const match = url.match(/linkedin\.com\/in\/([^\/\?]+)/);
-            if (match) extractedUrl = `https://linkedin.com/in/${match[1]}`;
-          } else if (url.includes("instagram.com/")) {
-            platform = "Instagram";
-            const match = url.match(/instagram\.com\/([^\/\?]+)/);
-            if (match) extractedUrl = `https://instagram.com/${match[1]}`;
-          } else if (url.includes("github.com/")) {
-            platform = "GitHub";
-            const match = url.match(/github\.com\/([^\/\?]+)/);
-            if (match) extractedUrl = `https://github.com/${match[1]}`;
-          } else if (url.includes("facebook.com/")) {
-            platform = "Facebook";
-            const match = url.match(/facebook\.com\/([^\/\?]+)/);
-            if (match) extractedUrl = `https://facebook.com/${match[1]}`;
-          }
-          
-          // Check if we already have this platform
-          const existing = profiles.find(p => p.platform === platform);
-          if (!existing) {
-            console.log(`  ✨ Found ${platform} via name search`);
-            profiles.push({
-              platform,
-              url: extractedUrl,
-              found: true,
-              confidence,
-              checkedAt: new Date(),
+      case "username": {
+        console.log("\n🔍 Starting username search...");
+
+        // Parse the query to detect if it's a person name
+        const parsed = parseSearchQuery(searchQuery);
+        console.log(`📝 Query type: ${parsed.type}`);
+
+        let usernameToSearch: string;
+        let profiles: any[] = [];
+
+        if (parsed.type === "person") {
+          console.log(`👤 Detected person name: "${parsed.cleanedQuery}"`);
+
+          // Check if we have a known username mapping
+
+
+          usernameToSearch = parsed.suggestedUsername || parsed.cleanedQuery;
+          console.log(`💡 Suggested username: ${usernameToSearch}`);
+
+
+          // Search with suggested username
+          const usernameResult = await searchUsername(usernameToSearch);
+          profiles = usernameResult.profiles;
+
+          // Also do a Tavily search for the person's name to find more profiles
+          if (apiKeys.tavily) {
+            console.log(`\n🌐 Searching for person name via Tavily...`);
+            const nameResults = await searchWithTavily(
+              `"${parsed.cleanedQuery}" social media profile site:twitter.com OR site:linkedin.com OR site:instagram.com OR site:github.com`,
+              apiKeys.tavily
+            );
+
+            console.log(`📊 Tavily found ${nameResults.length} person-name results`);
+
+            // Extract usernames from Tavily results
+            nameResults.forEach((result) => {
+              const url = result.url.toLowerCase();
+              let platform = "Other";
+              let extractedUrl = result.url;
+              let confidence: "high" | "medium" | "low" = "high";
+
+              // Extract username from URL
+              if (url.includes("twitter.com/") || url.includes("x.com/")) {
+                platform = "Twitter";
+                const match = url.match(/(?:twitter\.com|x\.com)\/([^\/\?]+)/);
+                if (match) extractedUrl = `https://twitter.com/${match[1]}`;
+              } else if (url.includes("linkedin.com/in/")) {
+                platform = "LinkedIn";
+                const match = url.match(/linkedin\.com\/in\/([^\/\?]+)/);
+                if (match) extractedUrl = `https://linkedin.com/in/${match[1]}`;
+              } else if (url.includes("instagram.com/")) {
+                platform = "Instagram";
+                const match = url.match(/instagram\.com\/([^\/\?]+)/);
+                if (match) extractedUrl = `https://instagram.com/${match[1]}`;
+              } else if (url.includes("github.com/")) {
+                platform = "GitHub";
+                const match = url.match(/github\.com\/([^\/\?]+)/);
+                if (match) extractedUrl = `https://github.com/${match[1]}`;
+              } else if (url.includes("facebook.com/")) {
+                platform = "Facebook";
+                const match = url.match(/facebook\.com\/([^\/\?]+)/);
+                if (match) extractedUrl = `https://facebook.com/${match[1]}`;
+              }
+
+              // Check if we already have this platform
+              const existing = profiles.find(p => p.platform === platform);
+              if (!existing) {
+                console.log(`  ✨ Found ${platform} via name search`);
+                profiles.push({
+                  platform,
+                  url: extractedUrl,
+                  found: true,
+                  confidence,
+                  checkedAt: new Date(),
+                });
+              } else if (existing.confidence !== "high") {
+                // Upgrade confidence
+                console.log(`  ⬆️ Upgraded ${platform} to high confidence`);
+                existing.confidence = "high";
+                existing.url = extractedUrl;
+              }
             });
-          } else if (existing.confidence !== "high") {
-            // Upgrade confidence
-            console.log(`  ⬆️ Upgraded ${platform} to high confidence`);
-            existing.confidence = "high";
-            existing.url = extractedUrl;
           }
-        });
+        } else {
+          // Direct username search
+          console.log(`👤 Searching for username: ${parsed.cleanedQuery}`);
+          const usernameResult = await searchUsername(parsed.cleanedQuery);
+          profiles = usernameResult.profiles;
+        }
+
+        // Convert to expected format
+        results = {
+          platforms: profiles.map(p => ({
+            name: p.platform,
+            url: p.url,
+            exists: p.found,
+            confidence: p.confidence,
+            category: "Social Media",
+          })),
+          summary: `Found ${profiles.length} profiles for "${searchQuery}" across 20 platforms checked.`,
+        };
+
+        console.log(`✅ Username search complete: ${profiles.length} profiles found`);
+        break;
       }
-    } else {
-      // Direct username search
-      console.log(`👤 Searching for username: ${parsed.cleanedQuery}`);
-      const usernameResult = await searchUsername(parsed.cleanedQuery);
-      profiles = usernameResult.profiles;
-    }
-    
-    // Convert to expected format
-    results = {
-      platforms: profiles.map(p => ({
-        name: p.platform,
-        url: p.url,
-        exists: p.found,
-        confidence: p.confidence,
-        category: "Social Media",
-      })),
-      summary: `Found ${profiles.length} profiles for "${searchQuery}" across 20 platforms checked.`,
-    };
-    
-    console.log(`✅ Username search complete: ${profiles.length} profiles found`);
-    break;
-  }
 
 
       case "email":
@@ -535,7 +535,7 @@ export async function POST(request: NextRequest) {
       const tavilyQuery = searchType === "username"
         ? `"${searchQuery}" social media profile`
         : `"${searchQuery}" OSINT`;
-      
+
       const webSearch = await searchWithTavily(tavilyQuery, apiKeys.tavily);
       webResults = webSearch;
       console.log(`✅ Tavily returned ${webResults.length} results`);

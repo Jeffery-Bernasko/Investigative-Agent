@@ -1,74 +1,33 @@
 import { createOllamaClient, OllamaClient } from "@/lib/ai/ollama-adapter";
 import { db } from "@/lib/db";
-import {
-  Intent,
-  IntentSchema,
-  InvestigationPlan,
-  InvestigationPlanSchema,
-  InvestigationResult,
-  OsintFindings,
-} from "./types";
+import { Intent, InvestigationResult, OsintFindings } from "./types";
 import {
   createEntity,
   getEntityByName,
   storeOsintFindings,
-  calculateRiskScore,
-  generateInsights,
 } from "./tools/osint-tools";
 import { OsintAgent } from "./osint-agent";
-
-type SafeErrorInfo = {
-  name: string;
-  message: string;
-  stack?: string;
-};
-
-function getSafeErrorInfo(error: unknown): SafeErrorInfo {
-  try {
-    if (error instanceof Error) {
-      return {
-        name: error.name || "Error",
-        message: error.message || "Unknown error",
-        stack: error.stack,
-      };
-    }
-
-    if (typeof error === "string") {
-      return {
-        name: "Error",
-        message: error,
-      };
-    }
-
-    return {
-      name: "UnknownError",
-      message: "A non-Error value was thrown",
-    };
-  } catch {
-    return {
-      name: "UnknownError",
-      message: "Failed to parse thrown error safely",
-    };
-  }
-}
+import { getSafeErrorInfo } from "./utils/errors";
+import { parseIntent, createPlan } from "./utils/llm-helpers";
+import { analyzeResults, generateRecommendations } from "./utils/analysis";
+import {
+  mapAgentResultToFindings,
+  computeFindingsStats,
+} from "./utils/result-mapper";
 
 export class OrchestratorAgent {
   private llm: OllamaClient;
   private db: any;
-  private osintAgent: OsintAgent; // ADD THIS
+  private osintAgent: OsintAgent;
 
   constructor() {
-
-
     this.llm = createOllamaClient({
       baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
       model: process.env.OLLAMA_MODEL || "mistral",
-
     });
 
     this.db = db;
 
-    // Initialize OSINT Agent
     this.osintAgent = new OsintAgent({
       name: "OSINT Agent",
       llm: this.llm,
@@ -76,9 +35,12 @@ export class OrchestratorAgent {
     });
   }
 
-  async investigate(userInput: string, userId: string): Promise<InvestigationResult> {
+  async investigate(
+    userInput: string,
+    userId: string
+  ): Promise<InvestigationResult> {
     const startTime = Date.now();
-    const investigationId = crypto.randomUUID(); // Get a random UUD for investigation
+    const investigationId = crypto.randomUUID();
 
     console.log(`\n🎯 ============================================`);
     console.log(`🎯 ORCHESTRATOR: Starting Investigation`);
@@ -87,18 +49,17 @@ export class OrchestratorAgent {
     console.log(`🎯 ============================================\n`);
 
     try {
-
       // Warmup: pre-load Ollama model into memory (handles cold-start)
       await this.llm.warmup();
 
       // Step 1: Parse user intent
       console.log(`📝 Step 1: Parsing user intent...`);
-      const intent = await this.parseIntent(userInput);
+      const intent = await parseIntent(this.llm, userInput);
       console.log(`✅ Intent parsed:`, JSON.stringify(intent, null, 2));
 
       // Step 2: Create investigation plan
       console.log(`\n📋 Step 2: Creating investigation plan...`);
-      const plan = await this.createPlan(intent);
+      const plan = await createPlan(this.llm, intent);
       console.log(`✅ Plan created:`, JSON.stringify(plan, null, 2));
 
       // Step 3: Prepare entity
@@ -106,19 +67,25 @@ export class OrchestratorAgent {
       const entity = await this.prepareEntity(intent, userId);
       console.log(`✅ Entity ready: ${entity.name} (ID: ${entity.id})`);
 
-      // Step 4: Execute investigation WITH OSINT AGENT
+      // Step 4: Execute investigation with OSINT Agent
       console.log(`\n🚀 Step 4: Executing investigation with OSINT Agent...`);
-      const findings = await this.executeInvestigationWithAgent(intent, entity);
-      console.log(`✅ Investigation complete. Found ${findings.profiles.length} profiles.`);
+      const osintResult = await this.runOsintAgent(intent, entity);
+      const findings = mapAgentResultToFindings(osintResult.data);
+      computeFindingsStats(findings, osintResult.confidence);
+      console.log(
+        `✅ Investigation complete. Found ${findings.profiles.length} profiles.`
+      );
 
       // Step 5: Analyze results
       console.log(`\n🧪 Step 5: Analyzing results...`);
-      const analysis = await this.analyzeResults(findings, intent);
-      console.log(`✅ Analysis complete. Risk Score: ${analysis.riskScore}/10`);
+      const analysis = await analyzeResults(this.llm, findings, intent);
+      console.log(
+        `✅ Analysis complete. Risk Score: ${analysis.riskScore}/10`
+      );
 
       // Step 6: Generate recommendations
       console.log(`\n💡 Step 6: Generating recommendations...`);
-      const recommendations = await this.generateRecommendations(
+      const recommendations = generateRecommendations(
         findings,
         analysis.riskScore
       );
@@ -170,88 +137,7 @@ export class OrchestratorAgent {
     }
   }
 
-  private async parseIntent(userInput: string): Promise<Intent> {
-    const prompt = `Parse this OSINT investigation request and extract the target entity.
-
-User request: "${userInput}"
-
-Rules:
-- target: The entity to investigate (name, username, email, domain, or IP)
-- targetType: one of "username", "email", "domain", "ip", "person", "organization"
-- intent: one of "investigate", "monitor", "analyze", "search" (default: "investigate")
-- scope: one of "quick", "standard", "deep" (default: "standard")
-
-Examples:
-"Investigate Elon Musk" → {"target":"Elon Musk","targetType":"person","intent":"investigate","scope":"standard"}
-"Search @johndoe" → {"target":"johndoe","targetType":"username","intent":"search","scope":"standard"}
-"Deep scan example.com" → {"target":"example.com","targetType":"domain","intent":"investigate","scope":"deep"}
-"Analyze user@mail.com" → {"target":"user@mail.com","targetType":"email","intent":"analyze","scope":"standard"}
-
-Respond with ONLY a JSON object, no other text:`;
-
-    const response = await this.llm.chat.completions.create({
-      messages: [
-        {
-          role: "system",
-          content: "You output only valid JSON. No markdown, no explanation, no code fences.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.1,
-      max_tokens: 200,
-    });
-
-    const content = response.choices[0].message.content || "{}";
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    const jsonString = jsonMatch ? jsonMatch[0] : content;
-    const parsed = JSON.parse(jsonString);
-
-    // Strip any suggestedUsername from metadata — name-first search handles discovery
-    if (parsed.metadata?.suggestedUsername) {
-      delete parsed.metadata.suggestedUsername;
-    }
-    return IntentSchema.parse(parsed);
-  }
-
-  private async createPlan(intent: Intent): Promise<InvestigationPlan> {
-    const prompt = `Create a step-by-step investigation plan.
-
-Target: ${intent.target}
-Type: ${intent.targetType}
-Intent: ${intent.intent}
-Scope: ${intent.scope}
-
-Available tools: osint-agent, searchUsername, extractEmails, extractDomains, calculateRisk, generateInsights
-
-Example response format:
-{"steps":[{"step":1,"action":"Search username across platforms","tool":"searchUsername","priority":1},{"step":2,"action":"Extract emails","tool":"extractEmails","priority":2}],"estimatedDuration":"15 minutes"}
-
-Respond with ONLY a JSON object:`;
-
-    const response = await this.llm.chat.completions.create({
-      messages: [
-        {
-          role: "system",
-          content: "You output only valid JSON. No markdown, no explanation, no code fences.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.2,
-      max_tokens: 500,
-    });
-
-    const content = response.choices[0].message.content || "{}";
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    const jsonString = jsonMatch ? jsonMatch[0] : content;
-    const parsed = JSON.parse(jsonString);
-    return InvestigationPlanSchema.parse(parsed);
-  }
+  // ── Private helpers ────────────────────────────────────────────────
 
   private async prepareEntity(intent: Intent, userId: string) {
     try {
@@ -278,7 +164,6 @@ Respond with ONLY a JSON object:`;
         `⚠️ DB entity operation failed, using in-memory entity:`,
         error instanceof Error ? error.message : error
       );
-      // Return a minimal in-memory entity so the investigation can proceed
       return {
         id: -1,
         name: intent.target,
@@ -289,194 +174,29 @@ Respond with ONLY a JSON object:`;
     }
   }
 
-  // NEW: Execute investigation using OSINT Agent
-  private async executeInvestigationWithAgent(
-    intent: Intent,
-    entity: any
-  ): Promise<OsintFindings> {
-    const findings: OsintFindings = {
-      profiles: [],
-      emails: [],
-      domains: [],
-      metadata: {},
-    };
-
-    // Determine the target to investigate
-    let targetToInvestigate = intent.target;
-
+  private async runOsintAgent(intent: Intent, entity: any) {
     if (intent.targetType === "person") {
-      console.log(`👤 Person detected: "${intent.target}" → using name-first search strategy`);
+      console.log(
+        `👤 Person detected: "${intent.target}" → using name-first search strategy`
+      );
     }
 
-    // Use OSINT Agent to gather intelligence
     console.log(`🤖 Delegating to OSINT Agent...`);
-    const osintResult = await this.osintAgent.execute({
+    const result = await this.osintAgent.execute({
       entityId: entity.id.toString(),
       description: `Gather comprehensive OSINT on ${intent.targetType}`,
-      target: targetToInvestigate,
-      metadata: { originalTarget: intent.target, targetType: intent.targetType },
+      target: intent.target,
+      metadata: {
+        originalTarget: intent.target,
+        targetType: intent.targetType,
+      },
     });
 
-    if (!osintResult.success) {
-      console.error(`❌ OSINT Agent failed:`, osintResult.error);
-      return findings;
+    if (!result.success) {
+      console.error(`❌ OSINT Agent failed:`, result.error);
+      return { data: {}, confidence: undefined };
     }
 
-    // Process OSINT Agent results
-    const agentData = osintResult.data;
-
-    // Username/Person results
-    if (agentData.username) {
-      findings.profiles = agentData.username.profiles || [];
-      console.log(`✅ Found ${findings.profiles.length} profiles`);
-    }
-
-    // Email results
-    if (agentData.email) {
-      findings.emails = [agentData.email.email];
-      findings.metadata.emailIntel = {
-        valid: agentData.email.isValid,
-        disposable: agentData.email.isDisposable,
-        breaches: agentData.email.breaches.length,
-        breachDetails: agentData.email.breaches,
-        gravatar: agentData.email.gravatar.exists,
-        hunterScore: agentData.email.hunter.score,
-      };
-      console.log(`  ✅ Email: Valid=${agentData.email.isValid}, Breaches=${agentData.email.breaches.length}`);
-    }
-
-    // Domain results
-    if (agentData.domain) {
-      findings.domains = [agentData.domain.domain];
-      findings.metadata.domainIntel = {
-        dns: agentData.domain.dns,
-        ssl: agentData.domain.ssl.valid,
-        shodanPorts: agentData.domain.shodan.ports?.length || 0,
-        shodanVulns: agentData.domain.shodan.vulns?.length || 0,
-        virusTotalMalicious: agentData.domain.virusTotal.malicious || 0,
-      };
-      console.log(`  ✅ Domain: SSL=${agentData.domain.ssl.valid}, DNS=${agentData.domain.dns.a.length} A records`);
-    }
-
-    // Phone results
-    if (agentData.phone) {
-      findings.metadata.phoneIntel = {
-        valid: agentData.phone.isValid,
-        country: agentData.phone.country?.name,
-        format: agentData.phone.format.international,
-      };
-      console.log(`  ✅ Phone: Valid=${agentData.phone.isValid}, Country=${agentData.phone.country?.name}`);
-    }
-
-    // Statistics
-    findings.metadata.searchedPlatforms = 20;
-    findings.metadata.foundPlatforms = findings.profiles.filter((p) => p.found).length;
-    findings.metadata.highConfidenceProfiles = findings.profiles.filter(
-      (p) => p.confidence === "high"
-    ).length;
-    findings.metadata.mediumConfidenceProfiles = findings.profiles.filter(
-      (p) => p.confidence === "medium"
-    ).length;
-    findings.metadata.osintAgentConfidence = osintResult.confidence;
-
-    return findings;
-  }
-
-  private async analyzeResults(findings: OsintFindings, intent: Intent) {
-    const riskScore = calculateRiskScore(findings);
-    const summary = await this.generateSummary(findings, intent, riskScore);
-    const insights = generateInsights(findings, riskScore);
-
-    return {
-      riskScore,
-      summary,
-      insights,
-    };
-  }
-
-  private async generateSummary(
-    findings: OsintFindings,
-    intent: Intent,
-    riskScore: number
-  ): Promise<string> {
-    const prompt = `
-Generate a concise executive summary for this OSINT investigation:
-
-Target: ${intent.target}
-Type: ${intent.targetType}
-Profiles Found: ${findings.profiles.length}
-Platforms: ${findings.profiles.map((p) => p.platform).join(", ")}
-Emails Found: ${findings.emails.length}
-Domains Found: ${findings.domains.length}
-Risk Score: ${riskScore}/10
-
-Additional Intelligence:
-${findings.metadata.emailIntel ? `- Email breaches: ${findings.metadata.emailIntel.breaches}` : ""}
-${findings.metadata.domainIntel ? `- Domain vulnerabilities: ${findings.metadata.domainIntel.shodanVulns}` : ""}
-${findings.metadata.phoneIntel ? `- Phone country: ${findings.metadata.phoneIntel.country}` : ""}
-
-Provide a 2-3 sentence summary highlighting key findings and risks.
-`;
-
-    const response = await this.llm.chat.completions.create({
-      messages: [
-        {
-          role: "system",
-          content: "You are a investigative analyst writing executive summaries.", // Change to investigative analyst
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.2,
-    });
-
-    return response.choices[0].message.content || "No summary available.";
-  }
-
-  private async generateRecommendations(
-    findings: OsintFindings,
-    riskScore: number
-  ): Promise<string[]> {
-    const recommendations: string[] = [];
-
-    // Risk-based recommendations
-    if (riskScore >= 7) {
-      recommendations.push("🔴 HIGH PRIORITY: Review and limit information exposure immediately");
-      recommendations.push("🔒 Enable 2FA on all identified accounts");
-      recommendations.push("🔍 Conduct full security audit of online presence");
-    } else if (riskScore >= 4) {
-      recommendations.push("🟡 MEDIUM PRIORITY: Review privacy settings on active platforms");
-      recommendations.push("👁️ Monitor for unusual activity");
-      recommendations.push("🔑 Update passwords on identified accounts");
-    } else {
-      recommendations.push("🟢 LOW RISK: Maintain current security posture");
-      recommendations.push("📅 Schedule periodic monitoring");
-    }
-
-    // Email-specific recommendations
-    if (findings.metadata.emailIntel?.breaches > 0) {
-      recommendations.push(
-        `🚨 URGENT: ${findings.metadata.emailIntel.breaches} data breach(es) detected - change passwords immediately`
-      );
-    }
-
-    // Domain-specific recommendations
-    if (findings.metadata.domainIntel?.shodanVulns > 0) {
-      recommendations.push(
-        `⚠️ Domain has ${findings.metadata.domainIntel.shodanVulns} known vulnerabilities - patch immediately`
-      );
-    }
-
-    if (findings.profiles.length > 10) {
-      recommendations.push("📱 Consider consolidating online presence to reduce attack surface");
-    }
-
-    if (findings.emails.length > 0) {
-      recommendations.push(`📧 Check exposed emails against Have I Been Pwned`);
-    }
-    recommendations.push("📊 Generate full PDF report for documentation");
-    return recommendations;
+    return { data: result.data, confidence: result.confidence };
   }
 }

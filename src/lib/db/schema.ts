@@ -539,16 +539,13 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   activityLogs: many(activityLogs),
 }));
 
-export const entitiesRelations = relations(entities, ({ one, many }) => ({
-  user: one(users, {
-    fields: [entities.userId],
-    references: [users.id],
+export const entitiesRelations = relations(entities, ({ many }) => ({
+  outgoingRelationships: many(relationships, {
+    relationName: "sourceEntity",
   }),
-  sourceRelations: many(entityRelations, { relationName: 'sourceRelations' }),
-  targetRelations: many(entityRelations, { relationName: 'targetRelations' }),
-  vectors: many(vectors),
-  trackingLinks: many(trackingLinks),
-  jobs: many(jobQueue),
+  incomingRelationships: many(relationships, {
+    relationName: "targetEntity",
+  }),
 }));
 
 export const reportsRelations = relations(reports, ({ one, many }) => ({
@@ -558,6 +555,53 @@ export const reportsRelations = relations(reports, ({ one, many }) => ({
   }),
   vectors: many(vectors),
 }));
+
+export const relationships = pgTable("relationships", {
+  id: serial("id").primaryKey(),
+  sourceEntityId: integer("source_entity_id").notNull().references(() => entities.id),
+  targetEntityId: integer("target_entity_id").notNull().references(() => entities.id),
+  type: text("type").notNull(), // "colleague", "employer", "family", "associate", etc.
+  strength: integer("strength").notNull().default(50), // 0-100 confidence score
+  context: text("context"), // How they're related
+  evidence: jsonb("evidence").$type<{
+    sources: string[];
+    mentions: number;
+    sharedPlatforms: string[];
+    mutualConnections?: number;
+  }>(),
+  discoveredAt: timestamp("discovered_at").defaultNow(),
+  lastVerified: timestamp("last_verified"),
+  status: text("status").default("active"), // "active", "archived", "disputed"
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const relationshipsRelations = relations(relationships, ({ one }) => ({
+  sourceEntity: one(entities, {
+    fields: [relationships.sourceEntityId],
+    references: [entities.id],
+    relationName: "sourceEntity",
+  }),
+  targetEntity: one(entities, {
+    fields: [relationships.targetEntityId],
+    references: [entities.id],
+    relationName: "targetEntity",
+  }),
+}));
+
+export const networkMetrics = pgTable("network_metrics", {
+  id: serial("id").primaryKey(),
+  entityId: integer("entity_id").notNull().references(() => entities.id),
+  totalConnections: integer("total_connections").default(0),
+  strongConnections: integer("strong_connections").default(0), // strength > 70
+  weakConnections: integer("weak_connections").default(0), // strength < 40
+  influenceScore: integer("influence_score").default(0), // 0-100
+  centralityScore: real("centrality_score").default(0), // Network centrality
+  clusterCoefficient: real("cluster_coefficient").default(0), // How connected are their connections
+  averagePathLength: real("average_path_length"), // Average distance to other nodes
+  calculatedAt: timestamp("calculated_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
 
 // ============================================
 // Type Exports
@@ -579,3 +623,6 @@ export type UserSettings = typeof userSettings.$inferSelect;
 export type ActivityLog = typeof activityLogs.$inferSelect;
 export type JobQueue = typeof jobQueue.$inferSelect;
 export type NewJobQueue = typeof jobQueue.$inferInsert;
+export type Relationship = typeof relationships.$inferSelect;
+export type NewRelationship = typeof relationships.$inferInsert;
+

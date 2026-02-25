@@ -133,34 +133,34 @@ export const verifications = pgTable('verifications', {
 export const userSettings = pgTable('user_settings', {
   id: serial('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }).unique(),
-  
+
   // Microsoft Foundry / Azure OpenAI Settings
   azureEndpoint: text('azure_endpoint'),
   azureApiKey: text('azure_api_key'),
   azureDeploymentName: text('azure_deployment_name'),
   azureApiVersion: text('azure_api_version').default('2024-02-15-preview'),
-  
+
   // OpenAI Direct (fallback)
   openaiApiKey: text('openai_api_key'),
 
   //Ollama Settings
   ollamaBaseUrl: text('ollama_base_url'),
   ollamaModel: text('ollama_model'),
-  
+
   // OSINT API Keys
   hunterApiKey: text('hunter_api_key'),
   shodanApiKey: text('shodan_api_key'),
   virusTotalApiKey: text('virustotal_api_key'),
   hibpApiKey: text('hibp_api_key'),
-  
+
   // Tracking Settings
   ipinfoToken: text('ipinfo_token'),
-  
+
   // Preferences
   defaultAiModel: text('default_ai_model').default('gpt-4'),
   darkMode: boolean('dark_mode').default(true),
   notifications: boolean('notifications').default(true),
-  
+
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -172,18 +172,18 @@ export const userSettings = pgTable('user_settings', {
 export const entities = pgTable('entities', {
   id: serial('id').primaryKey(),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
-  
+
   name: text('name').notNull(),
   type: entityTypeEnum('type').notNull(),
   description: text('description'),
   threatLevel: threatLevelEnum('threat_level').default('unknown'),
   threatScore: integer('threat_score').default(0), // 0-100
-  
+
   // Core identifiers
   email: text('email'),
   phone: text('phone'),
   username: text('username'),
-  
+
   // Social media profiles (JSON)
   socialProfiles: jsonb('social_profiles').$type<{
     facebook?: string;
@@ -196,17 +196,17 @@ export const entities = pgTable('entities', {
     github?: string;
     [key: string]: string | undefined;
   }>(),
-  
+
   // Location data
   location: jsonb('location').$type<{
     country?: string;
     city?: string;
     coordinates?: { lat: number; lng: number };
   }>(),
-  
+
   // Metadata (flexible JSON for additional data)
   metadata: jsonb('metadata').$type<Record<string, unknown>>(),
-  
+
   // OSINT collected data
   osintData: jsonb('osint_data').$type<{
     breaches?: Array<{ name: string; date: string; data: string[] }>;
@@ -217,13 +217,13 @@ export const entities = pgTable('entities', {
     registeredSites?: string[];
     [key: string]: unknown;
   }>(),
-  
+
   // Image/avatar
   imageUrl: text('image_url'),
-  
+
   // Tags for categorization
   tags: text('tags').array(),
-  
+
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => ({
@@ -257,23 +257,23 @@ export const entityRelations = pgTable('entity_relations', {
 export const reports = pgTable('reports', {
   id: serial('id').primaryKey(),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
-  
+
   title: text('title').notNull(),
   content: text('content').notNull(),
   summary: text('summary'),
-  
+
   status: reportStatusEnum('status').default('draft'),
   threatLevel: threatLevelEnum('threat_level').default('unknown'),
-  
+
   source: text('source'),
   sourceUrl: text('source_url'),
-  
+
   // Related entities
   entityIds: integer('entity_ids').array(),
-  
+
   // Tags
   tags: text('tags').array(),
-  
+
   // AI-generated insights
   aiInsights: jsonb('ai_insights').$type<{
     summary?: string;
@@ -281,7 +281,7 @@ export const reports = pgTable('reports', {
     recommendations?: string[];
     relatedThreats?: string[];
   }>(),
-  
+
   publishedAt: timestamp('published_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -297,20 +297,20 @@ export const reports = pgTable('reports', {
 
 export const vectors = pgTable('vectors', {
   id: serial('id').primaryKey(),
-  
+
   // Reference to source (one of these will be set)
   entityId: integer('entity_id').references(() => entities.id, { onDelete: 'cascade' }),
   reportId: integer('report_id').references(() => reports.id, { onDelete: 'cascade' }),
-  
+
   // The embedding vector
   embedding: vector('embedding'),
-  
+
   // The original text that was embedded
   text: text('text').notNull(),
-  
+
   // Metadata about the embedding
   chunkIndex: integer('chunk_index').default(0),
-  
+
   createdAt: timestamp('created_at').defaultNow().notNull(),
 }, (table) => ({
   entityIdIdx: index('vectors_entity_id_idx').on(table.entityId),
@@ -325,20 +325,20 @@ export const trackingLinks = pgTable('tracking_links', {
   id: serial('id').primaryKey(),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
   entityId: integer('entity_id').references(() => entities.id, { onDelete: 'set null' }),
-  
+
   code: text('code').notNull().unique(), // Short unique code for URL
   name: text('name'),
   destinationUrl: text('destination_url').notNull(),
-  
+
   status: trackingLinkStatusEnum('status').default('active'),
-  
+
   // Click tracking
   clickCount: integer('click_count').default(0),
   lastClickAt: timestamp('last_click_at'),
-  
+
   // Expiration
   expiresAt: timestamp('expires_at'),
-  
+
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => ({
@@ -353,7 +353,7 @@ export const trackingLinks = pgTable('tracking_links', {
 export const trackingData = pgTable('tracking_data', {
   id: serial('id').primaryKey(),
   trackingLinkId: integer('tracking_link_id').notNull().references(() => trackingLinks.id, { onDelete: 'cascade' }),
-  
+
   // IP & Geo
   ipAddress: text('ip_address'),
   country: text('country'),
@@ -363,7 +363,7 @@ export const trackingData = pgTable('tracking_data', {
   longitude: real('longitude'),
   timezone: text('timezone'),
   isp: text('isp'),
-  
+
   // Device info
   userAgent: text('user_agent'),
   browser: text('browser'),
@@ -372,19 +372,19 @@ export const trackingData = pgTable('tracking_data', {
   osVersion: text('os_version'),
   device: text('device'),
   deviceType: text('device_type'), // mobile, tablet, desktop
-  
+
   // Network
   isVpn: boolean('is_vpn').default(false),
   isProxy: boolean('is_proxy').default(false),
   isTor: boolean('is_tor').default(false),
-  
+
   // Referrer
   referrer: text('referrer'),
-  
+
   // Additional data
   language: text('language'),
   screenResolution: text('screen_resolution'),
-  
+
   clickedAt: timestamp('clicked_at').defaultNow().notNull(),
 }, (table) => ({
   linkIdIdx: index('tracking_data_link_id_idx').on(table.trackingLinkId),
@@ -399,10 +399,10 @@ export const osintSearches = pgTable('osint_searches', {
   id: serial('id').primaryKey(),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
   entityId: integer('entity_id').references(() => entities.id, { onDelete: 'set null' }),
-  
+
   searchType: osintSearchTypeEnum('search_type').notNull(),
   query: text('query').notNull(),
-  
+
   // Results
   results: jsonb('results').$type<{
     platforms: Array<{
@@ -413,11 +413,11 @@ export const osintSearches = pgTable('osint_searches', {
     }>;
     summary?: string;
   }>(),
-  
+
   // Status
   status: text('status').default('pending'), // pending, processing, completed, failed
   error: text('error'),
-  
+
   createdAt: timestamp('created_at').defaultNow().notNull(),
   completedAt: timestamp('completed_at'),
 }, (table) => ({
@@ -507,16 +507,16 @@ export const jobQueue = pgTable('job_queue', {
 export const activityLogs = pgTable('activity_logs', {
   id: serial('id').primaryKey(),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
-  
+
   action: text('action').notNull(), // e.g., 'entity.created', 'search.performed'
   resourceType: text('resource_type'), // e.g., 'entity', 'report', 'search'
   resourceId: text('resource_id'),
-  
+
   details: jsonb('details'),
-  
+
   ipAddress: text('ip_address'),
   userAgent: text('user_agent'),
-  
+
   createdAt: timestamp('created_at').defaultNow().notNull(),
 }, (table) => ({
   userIdIdx: index('activity_logs_user_id_idx').on(table.userId),
@@ -603,10 +603,23 @@ export const networkMetrics = pgTable("network_metrics", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// ============================================
-// Type Exports
-// ============================================
+// Investigation Traces 
+export const investigationTraces = pgTable("investigation_traces", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+  entityId: integer("entity_id").references(() => entities.id, { onDelete: "set null" }),
+  target: text("target").notNull(),
+  status: text("status").notNull(),
+  planVersion: integer("plan_version").default(1),
+  steps: jsonb("steps"),
+  errors: jsonb("errors"),
+  totalLatencyMs: integer("total_latency_ms"),
+  startedAt: timestamp("started_at").notNull(),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
 
+// Type Exports
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Session = typeof sessions.$inferSelect;

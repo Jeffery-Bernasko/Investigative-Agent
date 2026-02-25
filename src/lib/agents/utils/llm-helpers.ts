@@ -72,10 +72,23 @@ Type: ${intent.targetType}
 Intent: ${intent.intent}
 Scope: ${intent.scope}
 
-Available tools: osint-agent, searchUsername, extractEmails, extractDomains, calculateRisk, generateInsights
+Available tools (use ONLY these exact IDs):
+- osint-gather: Collect OSINT data (profiles, emails, domains). ALWAYS include this first.
+- analyze-risk: Score risk and generate summary. Requires osint-gather.
+- generate-recommendations: Produce actionable recommendations. Requires analyze-risk.
+- store-findings: Persist results to database. Requires osint-gather.
+- discover-relationships: Map entity relationships and network. Requires store-findings.
+- deep-analysis: Behavioral profiling and digital footprint analysis. Requires osint-gather.
 
-Example response format:
-{"steps":[{"step":1,"action":"Search username across platforms","tool":"searchUsername","priority":1},{"step":2,"action":"Extract emails","tool":"extractEmails","priority":2}],"estimatedDuration":"15 minutes"}
+Rules:
+- "step" is the 1-based sequence number
+- "dependsOn" references the step number this step needs completed first (omit if none)
+- For "quick" scope: use osint-gather + analyze-risk + generate-recommendations only
+- For "standard" scope: use all except deep-analysis
+- For "deep" scope: use all tools
+
+Example:
+{"steps":[{"step":1,"action":"Gather OSINT data","tool":"osint-gather","priority":1},{"step":2,"action":"Analyze risk","tool":"analyze-risk","priority":1,"dependsOn":1},{"step":3,"action":"Generate recommendations","tool":"generate-recommendations","priority":2,"dependsOn":2},{"step":4,"action":"Store findings","tool":"store-findings","priority":2,"dependsOn":1},{"step":5,"action":"Discover relationships","tool":"discover-relationships","priority":3,"dependsOn":4},{"step":6,"action":"Deep behavioral analysis","tool":"deep-analysis","priority":3,"dependsOn":1}],"estimatedDuration":"5 minutes"}
 
 Respond with ONLY a JSON object:`;
 

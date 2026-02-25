@@ -25,15 +25,52 @@ export const PlanStepSchema = z.object({
   action: z.string().describe("What action to take"),
   tool: z.string().describe("Which tool/function to use"),
   priority: z.number().min(1).describe("Priority level (1=highest)"),
+  dependsOn: z.number().optional().describe("Step number this depends on"),
 });
 
 export const InvestigationPlanSchema = z.object({
   steps: z.array(PlanStepSchema),
   estimatedDuration: z.string().describe("Estimated time to complete"),
 });
-
 export type PlanStep = z.infer<typeof PlanStepSchema>;
 export type InvestigationPlan = z.infer<typeof InvestigationPlanSchema>;
+
+// Step Execution Results
+export interface StepResult {
+  status: "success" | "failed" | "skipped";
+  summary: string;
+  confidence?: number;
+  error?: string;
+}
+
+// Execution Context — mutable bag that accumulates results across steps
+export interface ExecutionContext {
+  intent: Intent;
+  entity: any;
+  findings: OsintFindings;
+  analysis?: { riskScore: number; insights: string[]; summary: string };
+  recommendations?: string[];
+  relationships?: any;
+  networkAnalysis?: any;
+  graphData?: any;
+  deepAnalysis?: any;
+  [key: string]: any;
+}
+
+// Tool Handler — registry entry for a single tool
+export interface ToolHandler {
+  name: string;
+  execute(ctx: ExecutionContext, deps: ToolDependencies): Promise<StepResult>;
+}
+
+// Dependencies injected into tool handlers
+export interface ToolDependencies {
+  llm: any;
+  db: any;
+  osintAgent: any;
+  relationshipAgent: any;
+  analysisAgent: any;
+}
 
 // Task for agents
 export interface Task {
@@ -68,6 +105,33 @@ export interface OsintFindings {
   metadata: Record<string, any>;
 }
 
+// Execution Trace — step-level telemetry
+export interface TraceStep {
+  stepNumber: number;
+  name: string;
+  status: "success" | "failed" | "skipped";
+  latencyMs: number;
+  agentName?: string;
+  confidenceBefore?: number;
+  confidenceAfter?: number;
+  toolCalls?: string[];
+  resultSummary?: string;
+  error?: string;
+}
+
+export interface InvestigationTrace {
+  traceId: string;
+  userId: string;
+  target: string;
+  planVersion: number;
+  steps: TraceStep[];
+  totalLatencyMs: number;
+  status: "completed" | "failed" | "partial";
+  errors: string[];
+  startedAt: Date;
+  completedAt: Date;
+}
+
 // Investigation Result (final output)
 export interface InvestigationResult {
   investigationId: string;
@@ -79,11 +143,12 @@ export interface InvestigationResult {
     insights: string[];
     summary: string;
   };
-  recommendations: string[];
+  recommendations?: string[];
   relationships?: DiscoveredRelationship[];
   networkAnalysis?: NetworkAnalysis;
   graphData?: { nodes: any[]; edges: any[] };
   deepAnalysis?: AnalysisResult;
+  trace?: InvestigationTrace;
   duration: number; // in seconds
   createdAt: Date;
 }

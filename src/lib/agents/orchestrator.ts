@@ -7,6 +7,7 @@ import {
   storeOsintFindings,
 } from "./tools/osint-tools";
 import { OsintAgent } from "./osint-agent";
+import { RelationshipAgent } from "./relationship-agent";
 import { getSafeErrorInfo } from "./utils/errors";
 import { parseIntent, createPlan } from "./utils/llm-helpers";
 import { analyzeResults, generateRecommendations } from "./utils/analysis";
@@ -19,6 +20,7 @@ export class OrchestratorAgent {
   private llm: OllamaClient;
   private db: any;
   private osintAgent: OsintAgent;
+  private relationshipAgent: RelationshipAgent;
 
   constructor() {
     this.llm = createOllamaClient({
@@ -30,6 +32,12 @@ export class OrchestratorAgent {
 
     this.osintAgent = new OsintAgent({
       name: "OSINT Agent",
+      llm: this.llm,
+      db: this.db,
+    });
+
+    this.relationshipAgent = new RelationshipAgent({
+      name: "Relationship Agent",
       llm: this.llm,
       db: this.db,
     });
@@ -100,6 +108,11 @@ export class OrchestratorAgent {
         investigationId,
       });
 
+      // Step 8: Discover relationships (non-blocking — failure won't break investigation)
+      console.log(`\n🕸️ Step 8: Discovering relationships...`);
+      const { relationships, networkAnalysis, graphData } =
+        await this.runRelationshipAgent(entity);
+
       const duration = Math.round((Date.now() - startTime) / 1000);
 
       console.log(`\n✅ ============================================`);
@@ -114,6 +127,9 @@ export class OrchestratorAgent {
         findings,
         analysis,
         recommendations,
+        relationships,
+        networkAnalysis,
+        graphData,
         duration,
         createdAt: new Date(),
       };
@@ -136,8 +152,6 @@ export class OrchestratorAgent {
       };
     }
   }
-
-  // ── Private helpers ────────────────────────────────────────────────
 
   private async prepareEntity(intent: Intent, userId: string) {
     try {
@@ -198,5 +212,48 @@ export class OrchestratorAgent {
     }
 
     return { data: result.data, confidence: result.confidence };
+  }
+
+  private async runRelationshipAgent(entity: any) {
+    try {
+      // Skip for in-memory fallback entities (no DB data to analyze)
+      if (entity.id === -1) {
+        console.log(
+          `⚠️ Skipping relationship analysis (in-memory entity)`
+        );
+        return {};
+      }
+
+      console.log(`🤖 Delegating to Relationship Agent...`);
+      const result = await this.relationshipAgent.execute({
+        entityId: entity.id.toString(),
+        description: "Discover and map relationships",
+        target: entity.name,
+      });
+
+      if (!result.success) {
+        console.warn(
+          `⚠️ Relationship Agent failed (non-fatal):`,
+          result.error
+        );
+        return {};
+      }
+
+      console.log(
+        `✅ Relationship analysis complete. Found ${result.data?.relationships?.length || 0} connections.`
+      );
+
+      return {
+        relationships: result.data?.relationships,
+        networkAnalysis: result.data?.networkAnalysis,
+        graphData: result.data?.graphData,
+      };
+    } catch (error) {
+      console.warn(
+        `⚠️ Relationship analysis failed (non-fatal):`,
+        error instanceof Error ? error.message : error
+      );
+      return {};
+    }
   }
 }

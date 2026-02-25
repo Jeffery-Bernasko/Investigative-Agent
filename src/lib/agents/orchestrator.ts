@@ -8,6 +8,7 @@ import {
 } from "./tools/osint-tools";
 import { OsintAgent } from "./osint-agent";
 import { RelationshipAgent } from "./relationship-agent";
+import { AnalysisAgent } from "./analysis-agent";
 import { getSafeErrorInfo } from "./utils/errors";
 import { parseIntent, createPlan } from "./utils/llm-helpers";
 import { analyzeResults, generateRecommendations } from "./utils/analysis";
@@ -21,6 +22,7 @@ export class OrchestratorAgent {
   private db: any;
   private osintAgent: OsintAgent;
   private relationshipAgent: RelationshipAgent;
+  private analysisAgent: AnalysisAgent;
 
   constructor() {
     this.llm = createOllamaClient({
@@ -38,6 +40,12 @@ export class OrchestratorAgent {
 
     this.relationshipAgent = new RelationshipAgent({
       name: "Relationship Agent",
+      llm: this.llm,
+      db: this.db,
+    });
+
+    this.analysisAgent = new AnalysisAgent({
+      name: "Analysis Agent",
       llm: this.llm,
       db: this.db,
     });
@@ -113,6 +121,14 @@ export class OrchestratorAgent {
       const { relationships, networkAnalysis, graphData } =
         await this.runRelationshipAgent(entity);
 
+      // Step 9: Deep analysis (non-blocking — failure won't break investigation)
+      console.log(`\n🧠 Step 9: Running deep analysis...`);
+      const deepAnalysis = await this.runAnalysisAgent(entity, {
+        findings,
+        relationships,
+        networkAnalysis,
+      });
+
       const duration = Math.round((Date.now() - startTime) / 1000);
 
       console.log(`\n✅ ============================================`);
@@ -130,6 +146,7 @@ export class OrchestratorAgent {
         relationships,
         networkAnalysis,
         graphData,
+        deepAnalysis,
         duration,
         createdAt: new Date(),
       };
@@ -254,6 +271,53 @@ export class OrchestratorAgent {
         error instanceof Error ? error.message : error
       );
       return {};
+    }
+  }
+
+  private async runAnalysisAgent(
+    entity: any,
+    investigationData: {
+      findings: any;
+      relationships?: any;
+      networkAnalysis?: any;
+    }
+  ) {
+    try {
+      // Skip for in-memory fallback entities
+      if (entity.id === -1) {
+        console.log(
+          `⚠️ Skipping deep analysis (in-memory entity)`
+        );
+        return undefined;
+      }
+
+      console.log(`🤖 Delegating to Analysis Agent...`);
+      const result = await this.analysisAgent.execute({
+        entityId: entity.id.toString(),
+        description: "Deep behavioral analysis and digital footprint monitoring",
+        target: entity.name,
+        metadata: { investigationData },
+      });
+
+      if (!result.success) {
+        console.warn(
+          `⚠️ Analysis Agent failed (non-fatal):`,
+          result.error
+        );
+        return undefined;
+      }
+
+      console.log(
+        `✅ Deep analysis complete. Insights: ${result.data?.insights?.length || 0}`
+      );
+
+      return result.data;
+    } catch (error) {
+      console.warn(
+        `⚠️ Deep analysis failed (non-fatal):`,
+        error instanceof Error ? error.message : error
+      );
+      return undefined;
     }
   }
 }

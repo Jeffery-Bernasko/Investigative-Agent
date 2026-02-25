@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { DiscoveredRelationship, NetworkAnalysis } from "../relationship-agent";
+import type { AnalysisResult } from "../analysis-agent";
 
 // Intent Schema (updated with metadata)
 export const IntentSchema = z.object({
@@ -82,6 +83,7 @@ export interface InvestigationResult {
   relationships?: DiscoveredRelationship[];
   networkAnalysis?: NetworkAnalysis;
   graphData?: { nodes: any[]; edges: any[] };
+  deepAnalysis?: AnalysisResult;
   duration: number; // in seconds
   createdAt: Date;
 }

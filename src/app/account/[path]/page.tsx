@@ -1,4 +1,4 @@
-import { AccountView } from "@neondatabase/neon-js/auth/react/ui";
+import { AccountView } from "@neondatabase/neon-js/auth/react";
 import { accountViewPaths } from "@neondatabase/neon-js/auth/react/ui/server";
 import { Sidebar } from "@/components/layout/sidebar";
 
@@ -36,7 +36,8 @@ export default async function AccountPage({
       </main>
 
       {/* Custom styles for account view */}
-      <style jsx global>{`
+      <style dangerouslySetInnerHTML={{
+        __html: `
         [data-neon-auth] {
           --neon-auth-primary: #00ff41;
           --neon-auth-primary-foreground: #000000;
@@ -80,7 +81,7 @@ export default async function AccountPage({
         [data-neon-auth] a {
           color: #00ff41 !important;
         }
-      `}</style>
+      `}} />
     </div>
   );
 }

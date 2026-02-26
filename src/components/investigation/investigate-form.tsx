@@ -378,7 +378,7 @@ export function InvestigateForm() {
             )}
 
             {/* Recommendations */}
-            {result.recommendations.length > 0 && (
+            {result.recommendations && result.recommendations.length > 0 && (
               <div className="p-6 rounded-2xl bg-white/5 border border-white/10">
                 <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
                   <Shield className="w-5 h-5 text-blue-400" />

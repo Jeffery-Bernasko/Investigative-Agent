@@ -1,6 +1,6 @@
 "use client";
 
-//import { AuthView } from "@neondatabase/neon-js/auth/react/ui";
+//import { AuthView } from "@neondatabase/neon-js/auth/react";
 import Link from "next/link";
 import { Shield, Lock, Zap, Check, Mail, ArrowRight, Sparkles } from "lucide-react";
 import { useParams, useSearchParams } from "next/navigation";
@@ -20,19 +20,19 @@ function LinePatternBackground() {
       <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-primary/15 rounded-full blur-[150px]" />
       <div className="absolute bottom-0 right-1/4 w-[700px] h-[700px] bg-cyan-500/10 rounded-full blur-[180px]" />
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[900px] h-[900px] bg-purple-500/5 rounded-full blur-[200px]" />
-      
+
       {/* Line patterns - diagonal */}
       <svg className="absolute inset-0 w-full h-full opacity-[0.03]" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <pattern id="diagonal-lines" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
-            <path d="M-10,10 l20,-20 M0,40 l40,-40 M30,50 l20,-20" stroke="rgba(0, 255, 65, 0.5)" strokeWidth="0.5" fill="none"/>
+            <path d="M-10,10 l20,-20 M0,40 l40,-40 M30,50 l20,-20" stroke="rgba(0, 255, 65, 0.5)" strokeWidth="0.5" fill="none" />
           </pattern>
         </defs>
         <rect width="100%" height="100%" fill="url(#diagonal-lines)" />
       </svg>
-      
+
       {/* Horizontal scan lines */}
-      <div 
+      <div
         className="absolute inset-0 opacity-[0.02]"
         style={{
           backgroundImage: `repeating-linear-gradient(
@@ -44,7 +44,7 @@ function LinePatternBackground() {
           )`,
         }}
       />
-      
+
       {/* Grid pattern */}
       <div
         className="absolute inset-0 opacity-[0.04]"
@@ -56,7 +56,7 @@ function LinePatternBackground() {
           backgroundSize: "60px 60px",
         }}
       />
-      
+
       {/* Animated scan line */}
       <motion.div
         className="absolute left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-primary/30 to-transparent"
@@ -191,13 +191,13 @@ export default function AuthPage() {
               <div className="relative w-full max-w-md">
                 {/* Glow effect behind card */}
                 <div className="absolute -inset-4 bg-gradient-to-r from-primary/30 via-transparent to-cyan-500/20 rounded-3xl blur-3xl opacity-60" />
-                
+
                 {/* Auth card wrapper with glass effect */}
                 <div className="relative glass-panel rounded-2xl p-8 md:p-10 border border-white/10 backdrop-blur-xl shadow-2xl">
                   {/* Corner accents */}
                   <div className="absolute top-0 left-0 w-16 h-16 border-t-2 border-l-2 border-primary/30 rounded-tl-2xl" />
                   <div className="absolute bottom-0 right-0 w-16 h-16 border-b-2 border-r-2 border-primary/30 rounded-br-2xl" />
-                  
+
                   {/* Title */}
                   <div className="text-center mb-8">
                     <motion.div
@@ -301,13 +301,13 @@ export default function AuthPage() {
               <div className="relative w-full max-w-md">
                 {/* Glow effect behind card */}
                 <div className="absolute -inset-4 bg-gradient-to-r from-primary/30 via-transparent to-cyan-500/20 rounded-3xl blur-3xl opacity-60" />
-                
+
                 {/* Auth card wrapper with glass effect */}
                 <div className="relative glass-panel rounded-2xl p-8 md:p-10 border border-white/10 backdrop-blur-xl shadow-2xl">
                   {/* Corner accents */}
                   <div className="absolute top-0 left-0 w-16 h-16 border-t-2 border-l-2 border-primary/30 rounded-tl-2xl" />
                   <div className="absolute bottom-0 right-0 w-16 h-16 border-b-2 border-r-2 border-primary/30 rounded-br-2xl" />
-                  
+
                   {/* Title */}
                   <div className="text-center mb-8">
                     <motion.h1
@@ -353,7 +353,7 @@ export default function AuthPage() {
                 {/* Corner accents */}
                 <div className="absolute top-0 left-0 w-16 h-16 border-t-2 border-l-2 border-primary/30 rounded-tl-2xl" />
                 <div className="absolute bottom-0 right-0 w-16 h-16 border-b-2 border-r-2 border-primary/30 rounded-br-2xl" />
-                
+
                 {/* Title */}
                 <div className="text-center mb-8">
                   {isVerifyEmail && (

@@ -10,7 +10,7 @@ import {
   HelpCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { UserButton } from "@neondatabase/neon-js/auth/react/ui";
+import { UserButton } from "@neondatabase/neon-js/auth/react";
 
 export function Header() {
   const [isSearchFocused, setIsSearchFocused] = useState(false);

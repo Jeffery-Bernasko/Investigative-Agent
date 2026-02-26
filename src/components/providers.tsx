@@ -1,7 +1,7 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { NeonAuthUIProvider } from "@neondatabase/neon-js/auth/react/ui";
+import { NeonAuthUIProvider } from "@neondatabase/neon-js/auth/react";
 import { authClient } from "@/lib/auth/client";
 import { useState } from "react";
 import { Toaster } from "sonner";
@@ -22,14 +22,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <NeonAuthUIProvider
-        authClient={authClient}
+        authClient={authClient as any}
         redirectTo="/auth/redirect-handler"
         social={{
           providers: ["google", "github"],
         }}
-        credentials={{ 
+        credentials={{
           forgotPassword: true,
-          verifyEmail: true,
         }}
       >
         {children}

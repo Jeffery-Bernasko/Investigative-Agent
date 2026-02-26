@@ -89,6 +89,14 @@ export interface AgentResult {
   confidence?: number;
 }
 
+// OSINT Target used in iteractive queue
+export interface OsintTarget {
+  term: string;
+  type: "person" | "username" | "email" | "domain" | "phone";
+  depth: number;
+  parent?: string;
+}
+
 // OSINT Findings
 export interface OsintFindings {
   profiles: Array<{
@@ -98,9 +106,11 @@ export interface OsintFindings {
     found: boolean;
     username?: string;
     data?: any;
+    provenance?: { sourceTarget: string; pivotDepth: number };
   }>;
-  emails: string[];
-  domains: string[];
+  emails: Array<{ address: string; provenance?: { sourceTarget: string; pivotDepth: number }; data?: any }>;
+  domains: Array<{ domain: string; provenance?: { sourceTarget: string; pivotDepth: number }; data?: any }>;
+  phones?: Array<{ number: string; provenance?: { sourceTarget: string; pivotDepth: number }; data?: any }>;
   webResults?: Array<{ title: string; url: string; snippet: string }>;
   metadata: Record<string, any>;
 }
@@ -119,6 +129,20 @@ export interface TraceStep {
   error?: string;
 }
 
+export interface ReplanEvent {
+  stepNumber: number;
+  reason: string;
+  previousPlanVersion: number;
+  newPlanVersion: number;
+  confidenceScore?: number;
+}
+
+export interface ReflectionResult {
+  needsReplan: boolean;
+  reason: string;
+  confidenceScore: number;
+}
+
 export interface InvestigationTrace {
   traceId: string;
   userId: string;
@@ -128,6 +152,7 @@ export interface InvestigationTrace {
   totalLatencyMs: number;
   status: "completed" | "failed" | "partial";
   errors: string[];
+  replanEvents?: ReplanEvent[];
   startedAt: Date;
   completedAt: Date;
 }

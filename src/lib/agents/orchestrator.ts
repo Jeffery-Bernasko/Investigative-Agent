@@ -11,6 +11,7 @@ import {
   StepResult,
   ToolDependencies,
   TraceStep,
+  ReplanEvent,
 } from "./types";
 import {
   createEntity,
@@ -20,13 +21,14 @@ import { OsintAgent } from "./osint-agent";
 import { RelationshipAgent } from "./relationship-agent";
 import { AnalysisAgent } from "./analysis-agent";
 import { getSafeErrorInfo } from "./utils/errors";
-import { parseIntent, createPlan } from "./utils/llm-helpers";
+import { parseIntent, createPlan, evaluateStepResults, replanFromContext } from "./utils/llm-helpers";
 import { createDefaultRegistry, ToolRegistry } from "./tool-registry";
 
 // Trace Collector — captures step-level telemetry
 class TraceCollector {
   private steps: TraceStep[] = [];
   private errors: string[] = [];
+  private replanEvents: ReplanEvent[] = [];
   private currentStep: { stepNumber: number; name: string; startMs: number } | null = null;
   private runStartMs: number;
 
@@ -78,6 +80,10 @@ class TraceCollector {
     this.errors.push(msg);
   }
 
+  addReplanEvent(event: ReplanEvent): void {
+    this.replanEvents.push(event);
+  }
+
   finalize(status: InvestigationTrace["status"]): InvestigationTrace {
     if (this.currentStep) {
       this.endStep("failed", { error: "Step did not complete (unhandled error)" });
@@ -92,6 +98,7 @@ class TraceCollector {
       totalLatencyMs: Date.now() - this.runStartMs,
       status,
       errors: this.errors,
+      replanEvents: this.replanEvents,
       startedAt: new Date(this.runStartMs),
       completedAt: new Date(),
     };
@@ -217,17 +224,26 @@ export class OrchestratorAgent {
       };
 
       // Sort steps by priority, then by step number
-      const sortedSteps = [...plan.steps].sort((a, b) =>
+      let sortedSteps = [...plan.steps].sort((a, b) =>
         a.priority !== b.priority ? a.priority - b.priority : a.step - b.step
       );
 
       const completedSteps = new Set<number>();
 
+      const MAX_ITERATIONS = 15;
+      const MAX_REPLANS = 3;
+      let iterations = 0;
+      let replanCount = 0;
+      let planVersion = 1;
+
       console.log(
         `\n⚡ Executing ${sortedSteps.length} planned steps...\n`
       );
 
-      for (const planStep of sortedSteps) {
+      while (sortedSteps.length > 0 && iterations < MAX_ITERATIONS) {
+        iterations++;
+        const planStep = sortedSteps.shift()!;
+
         // Check dependency
         if (planStep.dependsOn && !completedSteps.has(planStep.dependsOn)) {
           console.warn(
@@ -244,10 +260,67 @@ export class OrchestratorAgent {
         if (result.status === "success") {
           completedSteps.add(planStep.step);
         }
+
+        // EVALUATION & REPLAN LOGIC
+        if (replanCount < MAX_REPLANS) {
+          const reflection = await evaluateStepResults(
+            this.llm,
+            intent,
+            ctx.findings,
+            result,
+            planStep.tool
+          );
+
+          if (
+            reflection.needsReplan ||
+            (reflection.confidenceScore < 50 && result.status === "failed")
+          ) {
+            console.log(
+              `\n🔄 REPLAN TRIGGERED (Reason: ${reflection.reason}, Confidence: ${reflection.confidenceScore})`
+            );
+            replanCount++;
+
+            const event: ReplanEvent = {
+              stepNumber: planStep.step,
+              reason: reflection.reason,
+              previousPlanVersion: planVersion,
+              newPlanVersion: planVersion + 1,
+              confidenceScore: reflection.confidenceScore,
+            };
+            trace.addReplanEvent(event);
+            planVersion++;
+
+            const newPlan = await replanFromContext(
+              this.llm,
+              intent,
+              ctx,
+              Array.from(completedSteps),
+              reflection.reason
+            );
+
+            // Keep steps from the new plan that haven't been completed yet
+            const newRemaining = newPlan.steps.filter(
+              (s) => !completedSteps.has(s.step)
+            );
+            sortedSteps = [...newRemaining].sort((a, b) =>
+              a.priority !== b.priority
+                ? a.priority - b.priority
+                : a.step - b.step
+            );
+
+            console.log(
+              `✅ Replan complete. ${sortedSteps.length} steps remaining in new plan.`
+            );
+          }
+        }
+      }
+
+      if (iterations >= MAX_ITERATIONS && sortedSteps.length > 0) {
+        console.warn(`\n⚠️ Maximum iterations (${MAX_ITERATIONS}) reached. Halting execution.`);
+        trace.addError(`Max iterations (${MAX_ITERATIONS}) reached`);
       }
 
       // ── Finalize ───────────────────────────────────────────────
-
       const duration = Math.round((Date.now() - startTime) / 1000);
       const finalTrace = trace.finalize("completed");
       await this.persistTrace(finalTrace, entity.id);
@@ -368,6 +441,7 @@ export class OrchestratorAgent {
         planVersion: traceData.planVersion,
         steps: traceData.steps as any,
         errors: traceData.errors as any,
+        replanEvents: traceData.replanEvents as any,
         totalLatencyMs: traceData.totalLatencyMs,
         startedAt: traceData.startedAt,
         completedAt: traceData.completedAt,

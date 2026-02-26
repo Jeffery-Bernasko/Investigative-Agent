@@ -5,7 +5,55 @@ import {
     InvestigationPlan,
     InvestigationPlanSchema,
     OsintFindings,
+    ExecutionContext,
+    StepResult,
+    ReflectionResult,
 } from "../types";
+
+function getFallbackPlanDuration(
+    scope: Intent["scope"],
+    stepCount: number
+): string {
+    if (stepCount > 0) {
+        return `${Math.max(1, stepCount)} minute${stepCount === 1 ? "" : "s"}`;
+    }
+
+    const defaults: Record<Intent["scope"], string> = {
+        quick: "3 minutes",
+        standard: "6 minutes",
+        deep: "10 minutes",
+    };
+
+    return defaults[scope];
+}
+
+function normalizePlanOutput(
+    rawPlan: unknown,
+    intent: Intent
+): unknown {
+    if (!rawPlan || typeof rawPlan !== "object") {
+        return rawPlan;
+    }
+
+    const plan = rawPlan as {
+        steps?: unknown;
+        estimatedDuration?: unknown;
+    };
+
+    const hasEstimatedDuration =
+        typeof plan.estimatedDuration === "string" &&
+        plan.estimatedDuration.trim().length > 0;
+
+    if (hasEstimatedDuration) {
+        return rawPlan;
+    }
+
+    const stepCount = Array.isArray(plan.steps) ? plan.steps.length : 0;
+    return {
+        ...plan,
+        estimatedDuration: getFallbackPlanDuration(intent.scope, stepCount),
+    };
+}
 
 /**
  * Parse a natural-language investigation request into a structured Intent.
@@ -83,6 +131,7 @@ Available tools (use ONLY these exact IDs):
 Rules:
 - "step" is the 1-based sequence number
 - "dependsOn" references the step number this step needs completed first (omit if none)
+- Include "estimatedDuration" as a short string (example: "5 minutes")
 - For "quick" scope: use osint-gather + analyze-risk + generate-recommendations only
 - For "standard" scope: use all except deep-analysis
 - For "deep" scope: use all tools
@@ -109,7 +158,124 @@ Respond with ONLY a JSON object:`;
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     const jsonString = jsonMatch ? jsonMatch[0] : content;
     const parsed = JSON.parse(jsonString);
-    return InvestigationPlanSchema.parse(parsed);
+    const normalized = normalizePlanOutput(parsed, intent);
+    return InvestigationPlanSchema.parse(normalized);
+}
+
+/**
+ * Evaluate the most recent step result to determine if the plan needs modification.
+ */
+export async function evaluateStepResults(
+    llm: OllamaClient,
+    intent: Intent,
+    findings: OsintFindings,
+    recentResult: StepResult,
+    stepName: string
+): Promise<ReflectionResult> {
+    const prompt = `Evaluate the intermediate result of an OSINT investigation step.
+
+Target: ${intent.target}
+Type: ${intent.targetType}
+Intent: ${intent.intent}
+
+Step Executed: ${stepName}
+Step Status: ${recentResult.status}
+Step Summary: ${recentResult.summary}
+Step Error: ${recentResult.error || "None"}
+
+Current Findings Summary:
+- Profiles: ${findings.profiles.length}
+- Emails: ${findings.emails.length}
+- Domains: ${findings.domains.length}
+
+Does the recent step's failure or outcome critically compromise the investigation such that a replan is needed, or is the confidence so low that we must change approach?
+Respond with JSON only:
+{
+  "needsReplan": boolean,
+  "reason": "short explanation of why replan is or isn't needed",
+  "confidenceScore": number (0-100 indicating confidence in progress)
+}
+`;
+
+    const response = await llm.chat.completions.create({
+        messages: [
+            { role: "system", content: "You output only valid JSON. No markdown, no explanation." },
+            { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+        max_tokens: 200,
+    });
+
+    const content = response.choices[0].message.content || "{}";
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    const jsonString = jsonMatch ? jsonMatch[0] : "{}";
+
+    try {
+        const parsed = JSON.parse(jsonString);
+        return {
+            needsReplan: !!parsed.needsReplan,
+            reason: parsed.reason || "Unable to determine",
+            confidenceScore: typeof parsed.confidenceScore === "number" ? parsed.confidenceScore : 50,
+        };
+    } catch {
+        return { needsReplan: false, reason: "Parse error", confidenceScore: 50 };
+    }
+}
+
+/**
+ * Ask the LLM to produce a revised plan based on current context and reason.
+ */
+export async function replanFromContext(
+    llm: OllamaClient,
+    intent: Intent,
+    ctx: ExecutionContext,
+    completedSteps: number[],
+    reason: string
+): Promise<InvestigationPlan> {
+    const prompt = `Create a REVISED step-by-step investigation plan due to a needed replan.
+
+Reason for replan: ${reason}
+
+Target: ${intent.target}
+Type: ${intent.targetType}
+Intent: ${intent.intent}
+Scope: ${intent.scope}
+
+Already completed steps: ${completedSteps.join(", ") || "None"}
+
+Available tools (use ONLY these exact IDs):
+- osint-gather: Collect OSINT data
+- analyze-risk: Score risk and generate summary
+- generate-recommendations: Produce actionable recommendations
+- store-findings: Persist results to database
+- discover-relationships: Map entity relationships
+- deep-analysis: Behavioral profiling
+
+Rules for REVISED plan:
+- Generate a full plan from the current state to the end.
+- You can restart from step 1 or continue with higher step numbers.
+- "step" is the sequence number.
+- "dependsOn" references the step number this step needs.
+- Include "estimatedDuration" as a short string.
+
+Respond with ONLY a JSON object:
+{"steps":[{"step":1,"action":"...","tool":"...","priority":1}],"estimatedDuration":"5 minutes"}`;
+
+    const response = await llm.chat.completions.create({
+        messages: [
+            { role: "system", content: "You output only valid JSON. No markdown, no explanation, no code fences." },
+            { role: "user", content: prompt },
+        ],
+        temperature: 0.2,
+        max_tokens: 500,
+    });
+
+    const content = response.choices[0].message.content || "{}";
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    const jsonString = jsonMatch ? jsonMatch[0] : content;
+    const parsed = JSON.parse(jsonString);
+    const normalized = normalizePlanOutput(parsed, intent);
+    return InvestigationPlanSchema.parse(normalized);
 }
 
 /**

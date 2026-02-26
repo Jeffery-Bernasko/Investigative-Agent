@@ -123,56 +123,93 @@ export class RelationshipAgent extends BaseAgent {
     for (const profile of profiles) {
       console.log(`  🔍 Analyzing ${profile.platform}...`);
 
-      // Simulate bio/description (in real implementation, you'd scrape this)
-      const mockBio = this.getMockProfileData(entity.name, profile.platform);
+      // Extract real text payloads from OSINT object instead of mock data
+      let bioData = "";
+      let postsData: string[] = [];
+
+      if (profile.data && typeof profile.data === "object") {
+        const d = profile.data;
+
+        // Try to pull common biographical fields
+        const bioParts = [];
+        if (d.bio) bioParts.push(d.bio);
+        if (d.description) bioParts.push(d.description);
+        if (d.about) bioParts.push(d.about);
+        if (d.headline) bioParts.push(d.headline);
+        if (d.summary) bioParts.push(d.summary);
+
+        bioData = bioParts.join(" | ");
+
+        // Try to pull recent content/posts arrays
+        if (Array.isArray(d.posts)) postsData = d.posts.map((p: any) => typeof p === "string" ? p : JSON.stringify(p));
+        else if (Array.isArray(d.recent_posts)) postsData = d.recent_posts.map((p: any) => typeof p === "string" ? p : JSON.stringify(p));
+        else if (Array.isArray(d.tweets)) postsData = d.tweets.map((p: any) => typeof p === "string" ? p : JSON.stringify(p));
+      }
+
+      if (!bioData && postsData.length === 0) {
+        console.log(`    ⏭️ Skipping: No textual evidence available on ${profile.platform}`);
+        continue;
+      }
 
       const analysis = analyzeProfileForRelationships({
         platform: profile.platform,
-        bio: mockBio.bio,
-        posts: mockBio.posts,
+        bio: bioData,
+        posts: postsData,
       });
+
+      // Track rejections
+      let rejectedCount = 0;
 
       // Process employment relationships
       analysis.employment.forEach((emp) => {
-        discovered.push({
-          targetEntity: {
-            name: emp.company,
-            type: "organization",
-          },
-          relationshipType: "employment",
-          strength: 85,
-          context: emp.role
-            ? `${emp.role} at ${emp.company}`
-            : `Works at ${emp.company}`,
-          evidence: {
-            sources: [profile.platform],
-            mentions: 1,
-          },
-        });
+        if (emp.company.length > 2) {
+          discovered.push({
+            targetEntity: {
+              name: emp.company,
+              type: "organization",
+            },
+            relationshipType: "employment",
+            strength: 85,
+            context: emp.role
+              ? `${emp.role} at ${emp.company}`
+              : `Works at ${emp.company}`,
+            evidence: {
+              sources: [profile.url || profile.platform],
+              mentions: 1,
+            },
+          });
+        } else {
+          rejectedCount++;
+        }
       });
 
       // Process education relationships
       analysis.education.forEach((edu) => {
-        discovered.push({
-          targetEntity: {
-            name: edu.institution,
-            type: "organization",
-          },
-          relationshipType: "education",
-          strength: 80,
-          context: edu.degree
-            ? `${edu.degree} from ${edu.institution}`
-            : `Studied at ${edu.institution}`,
-          evidence: {
-            sources: [profile.platform],
-            mentions: 1,
-          },
-        });
+        if (edu.institution.length > 3) {
+          discovered.push({
+            targetEntity: {
+              name: edu.institution,
+              type: "organization",
+            },
+            relationshipType: "education",
+            strength: 80,
+            context: edu.degree
+              ? `${edu.degree} from ${edu.institution}`
+              : `Studied at ${edu.institution}`,
+            evidence: {
+              sources: [profile.url || profile.platform],
+              mentions: 1,
+            },
+          });
+        } else {
+          rejectedCount++;
+        }
       });
 
       // Process entity mentions
       analysis.entities.forEach((ent) => {
-        if (ent.name.toLowerCase() !== entity.name.toLowerCase()) {
+        // Enforce evidence threshold for generic associate entities
+        if (ent.mentions >= 1 && ent.confidence >= 60 && ent.name.toLowerCase() !== entity.name.toLowerCase()) {
           discovered.push({
             targetEntity: {
               name: ent.name,
@@ -182,57 +219,24 @@ export class RelationshipAgent extends BaseAgent {
             strength: Math.min(ent.confidence, 70),
             context: ent.context,
             evidence: {
-              sources: [profile.platform],
+              sources: [profile.url || profile.platform],
               mentions: ent.mentions,
             },
           });
+        } else if (ent.name.toLowerCase() !== entity.name.toLowerCase()) {
+          rejectedCount++;
         }
       });
+
+      if (rejectedCount > 0) {
+        console.log(`    ⚠️ Rejected ${rejectedCount} weak or incomplete relationship candidates.`);
+      }
     }
 
     // Deduplicate and merge relationships
     const merged = this.mergeRelationships(discovered);
 
     return merged;
-  }
-
-  private getMockProfileData(
-    entityName: string,
-    platform: string
-  ): { bio: string; posts: string[] } {
-    // In production, you'd scrape actual profile data
-    // For now, return mock data for demonstration
-    
-    const mockData: Record<string, any> = {
-      GitHub: {
-        bio: `Software Engineer passionate about open source. Working on interesting projects.`,
-        posts: [
-          "Just pushed a new feature to the main repo",
-          "Thanks to @john_doe for the collaboration",
-        ],
-      },
-      LinkedIn: {
-        bio: `Senior Software Engineer at Tech Corp. Previously at StartupXYZ. Computer Science degree from State University. Passionate about AI and cloud computing.`,
-        posts: [
-          "Excited to announce my new role at Tech Corp!",
-          "Great working with the team at StartupXYZ",
-        ],
-      },
-      Twitter: {
-        bio: `Tech enthusiast | Software Developer | Coffee lover`,
-        posts: [
-          "Love working with @jane_smith on this project",
-          "Attending the Tech Conference next week",
-        ],
-      },
-    };
-
-    return (
-      mockData[platform] || {
-        bio: `${entityName}'s profile on ${platform}`,
-        posts: [],
-      }
-    );
   }
 
   private mergeRelationships(

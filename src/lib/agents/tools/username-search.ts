@@ -1,7 +1,6 @@
 /**
  * Username search — check a username across 20 platforms with strict validation.
  */
-
 import { validateProfile } from "./platform-validator";
 import { searchWithTavily } from "./tavily-search";
 
@@ -67,9 +66,9 @@ export async function searchUsername(rawUsername: string): Promise<{
                     );
                     const found = response.ok;
                     if (found) {
-                        console.log(`  ✅ ${platform.name}: Found (API check)`);
+                        console.log(`✅ ${platform.name}: Found (API check)`);
                     } else {
-                        console.log(`  ❌ ${platform.name}: Not found (API check)`);
+                        console.log(`❌ ${platform.name}: Not found (API check)`);
                     }
                     return {
                         platform: platform.name,

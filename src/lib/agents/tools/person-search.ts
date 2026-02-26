@@ -101,7 +101,7 @@ export async function searchPersonByName(
     if (tavilyKey) {
         console.log(`  🔍 1A: Tavily name search...`);
         const tavilyResults = await searchWithTavily(
-            `"${fullName}" social media profile site:linkedin.com OR site:instagram.com OR site:x.com OR site:github.com OR site:facebook.com OR site:tiktok.com`,
+            `"${fullName}" social media profile (official OR verified) site:linkedin.com OR site:instagram.com OR site:x.com OR site:github.com OR site:facebook.com OR site:tiktok.com`,
             tavilyKey
         );
 
@@ -182,7 +182,7 @@ export async function searchPersonByName(
             const ghData = await ghResponse.json();
             const users = ghData.items || [];
             for (const user of users) {
-                console.log(`    ✅ GitHub user: ${user.login} (${user.html_url})`);
+                console.log(`✅ GitHub user: ${user.login} (${user.html_url})`);
                 discoveredUsernames.add(user.login.toLowerCase());
                 discoveredProfiles.push({
                     platform: "GitHub",
@@ -192,13 +192,13 @@ export async function searchPersonByName(
                     checkedAt: new Date(),
                 });
             }
-            console.log(`    📊 GitHub found ${users.length} users\n`);
+            console.log(`📊 GitHub found ${users.length} users\n`);
         } else {
-            console.log(`    ⚠️ GitHub API returned ${ghResponse.status}\n`);
+            console.log(`⚠️ GitHub API returned ${ghResponse.status}\n`);
         }
     } catch (error) {
         console.log(
-            `    ⚠️ GitHub API error: ${error instanceof Error ? error.message : error}\n`
+            `⚠️ GitHub API error: ${error instanceof Error ? error.message : error}\n`
         );
     }
 

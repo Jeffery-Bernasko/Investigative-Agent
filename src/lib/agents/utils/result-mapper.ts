@@ -1,7 +1,53 @@
 import { OsintFindings } from "../types";
 
+type ConfidenceLevel = "high" | "medium" | "low";
+
+function normalizeConfidence(value: unknown): ConfidenceLevel | undefined {
+    if (value === "high" || value === "medium" || value === "low") {
+        return value;
+    }
+    return undefined;
+}
+
+function normalizeProfiles(rawProfiles: unknown): OsintFindings["profiles"] {
+    if (!Array.isArray(rawProfiles)) {
+        return [];
+    }
+
+    return rawProfiles
+        .map((profile: any) => {
+            if (!profile || typeof profile !== "object") {
+                return null;
+            }
+
+            const platform =
+                typeof profile.platform === "string" ? profile.platform : "Unknown";
+            const url = typeof profile.url === "string" ? profile.url : "";
+
+            return {
+                platform,
+                url,
+                found: typeof profile.found === "boolean" ? profile.found : Boolean(url),
+                confidence: normalizeConfidence(profile.confidence) ?? "low",
+                username:
+                    typeof profile.username === "string"
+                        ? profile.username
+                        : undefined,
+                data: profile.data,
+            };
+        })
+        .filter(Boolean) as OsintFindings["profiles"];
+}
+
+function getFirstObject(raw: unknown): Record<string, any> | undefined {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        return undefined;
+    }
+    return raw as Record<string, any>;
+}
+
 /**
- * Map the raw output from OsintAgent into the normalised OsintFindings shape.
+ * Map the raw output from OsintAgent into the normalized OsintFindings shape.
  */
 export function mapAgentResultToFindings(agentData: any): OsintFindings {
     const findings: OsintFindings = {
@@ -11,53 +57,77 @@ export function mapAgentResultToFindings(agentData: any): OsintFindings {
         metadata: {},
     };
 
-    // Username / Person results
-    if (agentData.username) {
-        findings.profiles = agentData.username.profiles || [];
-        console.log(`✅ Found ${findings.profiles.length} profiles`);
-    }
+    // Profiles from current iterative agent shape (top-level) or legacy username shape.
+    const profilesFromAgent =
+        agentData?.profiles ?? agentData?.username?.profiles ?? [];
+    findings.profiles = normalizeProfiles(profilesFromAgent);
+    console.log(`Found ${findings.profiles.length} profiles`);
 
-    // Email results
-    if (agentData.email) {
+    // Email results: legacy single object or iterative array + metadata.
+    if (agentData?.email) {
         findings.emails = [agentData.email.email];
         findings.metadata.emailIntel = {
             valid: agentData.email.isValid,
             disposable: agentData.email.isDisposable,
-            breaches: agentData.email.breaches.length,
-            breachDetails: agentData.email.breaches,
-            gravatar: agentData.email.gravatar.exists,
-            hunterScore: agentData.email.hunter.score,
+            breaches: agentData.email.breaches?.length || 0,
+            breachDetails: agentData.email.breaches || [],
+            gravatar: agentData.email.gravatar?.exists,
+            hunterScore: agentData.email.hunter?.score,
         };
-        console.log(
-            `  ✅ Email: Valid=${agentData.email.isValid}, Breaches=${agentData.email.breaches.length}`
-        );
+    } else if (Array.isArray(agentData?.emails)) {
+        findings.emails = agentData.emails
+            .map((entry: any) =>
+                typeof entry?.address === "string" ? entry.address : null
+            )
+            .filter((value: string | null): value is string => Boolean(value));
+
+        const emailIntel =
+            getFirstObject(agentData?.metadata?.emailIntel) ??
+            getFirstObject(agentData?.emails?.[0]?.data);
+        if (emailIntel) {
+            findings.metadata.emailIntel = emailIntel;
+        }
     }
 
-    // Domain results
-    if (agentData.domain) {
+    // Domain results: legacy single object or iterative array + metadata.
+    if (agentData?.domain) {
         findings.domains = [agentData.domain.domain];
         findings.metadata.domainIntel = {
             dns: agentData.domain.dns,
-            ssl: agentData.domain.ssl.valid,
-            shodanPorts: agentData.domain.shodan.ports?.length || 0,
-            shodanVulns: agentData.domain.shodan.vulns?.length || 0,
-            virusTotalMalicious: agentData.domain.virusTotal.malicious || 0,
+            ssl: agentData.domain.ssl?.valid,
+            shodanPorts: agentData.domain.shodan?.ports?.length || 0,
+            shodanVulns: agentData.domain.shodan?.vulns?.length || 0,
+            virusTotalMalicious: agentData.domain.virusTotal?.malicious || 0,
         };
-        console.log(
-            `  ✅ Domain: SSL=${agentData.domain.ssl.valid}, DNS=${agentData.domain.dns.a.length} A records`
-        );
+    } else if (Array.isArray(agentData?.domains)) {
+        findings.domains = agentData.domains
+            .map((entry: any) =>
+                typeof entry?.domain === "string" ? entry.domain : null
+            )
+            .filter((value: string | null): value is string => Boolean(value));
+
+        const domainIntel =
+            getFirstObject(agentData?.metadata?.domainIntel) ??
+            getFirstObject(agentData?.domains?.[0]?.data);
+        if (domainIntel) {
+            findings.metadata.domainIntel = domainIntel;
+        }
     }
 
-    // Phone results
-    if (agentData.phone) {
+    // Phone results: legacy object or iterative metadata/array.
+    if (agentData?.phone) {
         findings.metadata.phoneIntel = {
             valid: agentData.phone.isValid,
             country: agentData.phone.country?.name,
-            format: agentData.phone.format.international,
+            format: agentData.phone.format?.international,
         };
-        console.log(
-            `  ✅ Phone: Valid=${agentData.phone.isValid}, Country=${agentData.phone.country?.name}`
-        );
+    } else {
+        const phoneIntel =
+            getFirstObject(agentData?.metadata?.phoneIntel) ??
+            getFirstObject(agentData?.phones?.[0]?.data);
+        if (phoneIntel) {
+            findings.metadata.phoneIntel = phoneIntel;
+        }
     }
 
     return findings;

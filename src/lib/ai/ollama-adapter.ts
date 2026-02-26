@@ -94,7 +94,7 @@ export class OllamaClient {
               format: 'json',
               keep_alive: this.keepAlive,
               options: {
-                temperature: params.temperature || 0.7,
+                temperature: params.temperature || 0.5,
                 num_predict: params.max_tokens || 2048,
               },
             }),

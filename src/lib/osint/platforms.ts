@@ -3,7 +3,7 @@ export const socialPlatforms = [
   // Major Social Networks
   { name: "Facebook", url: "https://www.facebook.com/{}", category: "social" },
   { name: "Instagram", url: "https://www.instagram.com/{}", category: "social" },
-  { name: "Twitter/X", url: "https://twitter.com/{}", category: "social" },
+  { name: "Twitter/X", url: "https://x.com/{}", category: "social" },
   { name: "TikTok", url: "https://www.tiktok.com/@{}", category: "social" },
   { name: "LinkedIn", url: "https://www.linkedin.com/in/{}", category: "professional" },
   { name: "Snapchat", url: "https://www.snapchat.com/add/{}", category: "social" },
@@ -161,6 +161,8 @@ export const phoneCarriers = [
   "Optus",
   "Telstra",
   "Vodafone AU",
+  "Telecel",
+  "MTN"
 ];
 
 export const categories = {

@@ -613,6 +613,7 @@ export const investigationTraces = pgTable("investigation_traces", {
   planVersion: integer("plan_version").default(1),
   steps: jsonb("steps"),
   errors: jsonb("errors"),
+  replanEvents: jsonb("replan_events"),
   totalLatencyMs: integer("total_latency_ms"),
   startedAt: timestamp("started_at").notNull(),
   completedAt: timestamp("completed_at"),

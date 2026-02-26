@@ -28,6 +28,7 @@ export async function searchWithTavily(
                     "linkedin.com",
                     "facebook.com",
                     "reddit.com",
+                    "tiktok.com",
                     "medium.com",
                 ],
             }),

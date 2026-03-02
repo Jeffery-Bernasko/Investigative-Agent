@@ -1,9 +1,18 @@
 /**
  * Name-first person search — discover social profiles by full name.
+ *
+ * Key architecture:
+ *   - Phase 1 discovers real usernames via Tavily + GitHub API
+ *   - An IdentityMap tracks which username belongs to which platform
+ *   - Phase 2 only searches platforms NOT yet in the IdentityMap
  */
 
-import { searchUsername } from "./username-search";
+import { searchUsernameOnPlatforms, ALL_PLATFORM_NAMES } from "./username-search";
 import { searchWithTavily } from "./tavily-search";
+
+// ═══════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════
 
 export type ProfileResult = {
     platform: string;
@@ -13,26 +22,92 @@ export type ProfileResult = {
     checkedAt?: Date;
 };
 
-/** Check whether a discovered username is plausibly related to the target name. */
+/** Tracks a confirmed username on a specific platform. */
+export interface PlatformIdentity {
+    username: string;
+    confidence: "high" | "medium" | "low";
+    source: "tavily" | "github-api" | "phase2-check" | "pivot";
+}
+
+/**
+ * Keyed by normalized platform name (e.g. "GitHub", "LinkedIn").
+ * Serializable form used in the return value.
+ */
+export type IdentityMap = Record<string, PlatformIdentity>;
+
+export interface PersonSearchResult {
+    found: boolean;
+    profiles: ProfileResult[];
+    identityMap: IdentityMap;
+}
+
+// ═══════════════════════════════════════════════════════
+// Username relevance checking
+// ═══════════════════════════════════════════════════════
+
+/**
+ * Check whether a discovered username is plausibly related to the target name.
+ *
+ * Strategies:
+ *   1. Substring match  — a name part (≥2 chars) appears in the username
+ *   2. Concatenation     — full concatenated name matches
+ *   3. Prefix match      — username starts with a name-part prefix (≥3 chars)
+ *   4. Initials match    — username starts with the person's initials
+ *   5. Reversed name     — "bernaskojeffery" style
+ *   6. Partial overlap   — 2+ name parts found (any order)
+ */
 export function isUsernameRelevant(
     username: string,
-    targetName: string
+    targetName: string,
 ): boolean {
     const nameParts = targetName
         .toLowerCase()
         .split(/\s+/)
         .filter((p) => p.length >= 2);
-    const lowerUsername = username.toLowerCase().replace(/[-_.]/g, "");
 
-    const hasNamePart = nameParts.some((part) => lowerUsername.includes(part));
+    if (nameParts.length === 0) return false;
 
+    const cleaned = username.toLowerCase().replace(/[-_.]/g, "");
+
+    // 1. Substring match (original logic)
+    const hasNamePart = nameParts.some((part) => cleaned.includes(part));
+
+    // 2. Concatenation match (original logic)
     const concatenated = nameParts.join("");
     const isVariation =
-        lowerUsername.includes(concatenated) ||
-        concatenated.includes(lowerUsername);
+        cleaned.includes(concatenated) || concatenated.includes(cleaned);
 
-    return hasNamePart || isVariation;
+    if (hasNamePart || isVariation) return true;
+
+    // 3. Prefix match — username starts with the first 3+ chars of any name part
+    const hasPrefixMatch = nameParts.some((part) => {
+        const prefix = part.slice(0, Math.max(3, Math.ceil(part.length * 0.6)));
+        return cleaned.startsWith(prefix);
+    });
+    if (hasPrefixMatch) return true;
+
+    // 4. Initials match — username starts with initials (e.g. "jb" for "Jeffery Bernasko")
+    if (nameParts.length >= 2) {
+        const initials = nameParts.map((p) => p[0]).join("");
+        if (initials.length >= 2 && cleaned.startsWith(initials)) return true;
+    }
+
+    // 5. Reversed name concatenation — "bernaskojeffery"
+    const reversed = [...nameParts].reverse().join("");
+    if (cleaned.includes(reversed) || reversed.includes(cleaned)) return true;
+
+    // 6. Partial overlap — at least 2 name parts appear (any order, any position)
+    if (nameParts.length >= 2) {
+        const matchCount = nameParts.filter((part) => cleaned.includes(part)).length;
+        if (matchCount >= 2) return true;
+    }
+
+    return false;
 }
+
+// ═══════════════════════════════════════════════════════
+// URL utilities
+// ═══════════════════════════════════════════════════════
 
 /** Extract username from a social profile URL. */
 export function extractUsernameFromUrl(url: string): string | null {
@@ -78,31 +153,34 @@ export function detectPlatformFromUrl(url: string): string {
     return "Other";
 }
 
+// ═══════════════════════════════════════════════════════
+// Main search function
+// ═══════════════════════════════════════════════════════
+
 export async function searchPersonByName(
-    fullName: string
-): Promise<{
-    found: boolean;
-    profiles: ProfileResult[];
-}> {
+    fullName: string,
+): Promise<PersonSearchResult> {
     console.log(`\n🧑 ============================================`);
     console.log(`🧑 PERSON SEARCH: "${fullName}"`);
-    console.log(`🧑 Strategy: Name-First Discovery → Username Verification`);
+    console.log(`🧑 Strategy: Name-First Discovery → Platform-Gap Filling`);
     console.log(`🧑 ============================================\n`);
 
     const discoveredProfiles: ProfileResult[] = [];
-    const discoveredUsernames = new Set<string>();
+    const identityMap = new Map<string, PlatformIdentity>();
 
-    console.log(
-        `📡 Phase 1: Discovering real usernames for "${fullName}"...\n`
-    );
+    // ══════════════════════════════════════════════════
+    // PHASE 1: Discover real identities (Tavily + APIs)
+    // ══════════════════════════════════════════════════
 
-    // 1A: Tavily name search
+    console.log(`📡 Phase 1: Discovering real usernames for "${fullName}"...\n`);
+
+    // ── 1A: Tavily name search ──
     const tavilyKey = process.env.TAVILY_API_KEY;
     if (tavilyKey) {
         console.log(`  🔍 1A: Tavily name search...`);
         const tavilyResults = await searchWithTavily(
             `"${fullName}" social media profile (official OR verified) site:linkedin.com OR site:instagram.com OR site:x.com OR site:github.com OR site:facebook.com OR site:tiktok.com`,
-            tavilyKey
+            tavilyKey,
         );
 
         for (const result of tavilyResults) {
@@ -119,9 +197,7 @@ export async function searchPersonByName(
                     urlLower.includes("/videos/") ||
                     urlLower.includes("/pub/dir/")
                 ) {
-                    console.log(
-                        `    ⏭️ Skipping non-profile Facebook URL: ${result.url}`
-                    );
+                    console.log(`    ⏭️ Skipping non-profile Facebook URL: ${result.url}`);
                     continue;
                 }
             }
@@ -132,9 +208,7 @@ export async function searchPersonByName(
                     urlLower.includes("/posts/") ||
                     !urlLower.includes("/in/")
                 ) {
-                    console.log(
-                        `    ⏭️ Skipping non-profile LinkedIn URL: ${result.url}`
-                    );
+                    console.log(`    ⏭️ Skipping non-profile LinkedIn URL: ${result.url}`);
                     continue;
                 }
             }
@@ -142,16 +216,24 @@ export async function searchPersonByName(
             if (platform !== "Other") {
                 if (username && !isUsernameRelevant(username, fullName)) {
                     console.log(
-                        `    ⏭️ Skipping unrelated username: "${username}" (not related to "${fullName}")`
+                        `    ⏭️ Skipping unrelated username: "${username}" (not related to "${fullName}")`,
                     );
                     continue;
                 }
+
                 console.log(
-                    `    ✅ Tavily found ${platform}: ${result.url}${username ? ` (username: ${username})` : ""}`
+                    `    ✅ Tavily found ${platform}: ${result.url}${username ? ` (username: ${username})` : ""}`,
                 );
-                if (username) {
-                    discoveredUsernames.add(username.toLowerCase());
+
+                // Record in identity map — platform-specific
+                if (username && !identityMap.has(platform)) {
+                    identityMap.set(platform, {
+                        username: username.toLowerCase(),
+                        confidence: "high",
+                        source: "tavily",
+                    });
                 }
+
                 discoveredProfiles.push({
                     platform,
                     url: result.url,
@@ -161,14 +243,12 @@ export async function searchPersonByName(
                 });
             }
         }
-        console.log(
-            `    📊 Tavily discovered ${discoveredProfiles.length} profiles\n`
-        );
+        console.log(`    📊 Tavily discovered ${discoveredProfiles.length} profiles\n`);
     } else {
         console.log(`  ⚠️ 1A: Tavily API key not set, skipping\n`);
     }
 
-    // 1B: GitHub API user search by name
+    // ── 1B: GitHub API user search by name ──
     console.log(`  🔍 1B: GitHub API user search...`);
     try {
         const ghResponse = await fetch(
@@ -176,14 +256,22 @@ export async function searchPersonByName(
             {
                 headers: { Accept: "application/vnd.github.v3+json" },
                 signal: AbortSignal.timeout(8000),
-            }
+            },
         );
         if (ghResponse.ok) {
             const ghData = await ghResponse.json();
             const users = ghData.items || [];
             for (const user of users) {
                 console.log(`✅ GitHub user: ${user.login} (${user.html_url})`);
-                discoveredUsernames.add(user.login.toLowerCase());
+
+                if (!identityMap.has("GitHub")) {
+                    identityMap.set("GitHub", {
+                        username: user.login.toLowerCase(),
+                        confidence: "high",
+                        source: "github-api",
+                    });
+                }
+
                 discoveredProfiles.push({
                     platform: "GitHub",
                     url: user.html_url,
@@ -198,18 +286,22 @@ export async function searchPersonByName(
         }
     } catch (error) {
         console.log(
-            `⚠️ GitHub API error: ${error instanceof Error ? error.message : error}\n`
+            `⚠️ GitHub API error: ${error instanceof Error ? error.message : error}\n`,
         );
     }
 
-    // Collect platforms already confirmed in Phase 1
-    const confirmedPlatforms = new Set<string>(
-        discoveredProfiles.filter((p) => p.found).map((p) => p.platform)
-    );
+    // ══════════════════════════════════════════════════
+    // PHASE 2: Fill platform gaps
+    // ══════════════════════════════════════════════════
 
-    // Filter usernames: remove LinkedIn slugs (contain random IDs like a617b6197)
-    const verifiableUsernames = Array.from(discoveredUsernames)
+    const confirmedPlatforms = new Set(identityMap.keys());
+
+    // Collect unique candidate usernames from the identity map
+    const candidateUsernames = Array.from(
+        new Set(Array.from(identityMap.values()).map((id) => id.username)),
+    )
         .filter((u) => {
+            // Remove LinkedIn slugs (contain random IDs like a617b6197)
             if (/[a-f0-9]{6,}$/i.test(u)) {
                 console.log(`  ⏭️ Skipping LinkedIn slug: "${u}"`);
                 return false;
@@ -218,41 +310,71 @@ export async function searchPersonByName(
         })
         .slice(0, 5);
 
-    console.log(
-        `🔎 Phase 2: Verifying ${verifiableUsernames.length} usernames (${confirmedPlatforms.size} platforms already confirmed)...\n`
+    // Determine which platforms Phase 1 did NOT cover
+    const missingPlatforms = ALL_PLATFORM_NAMES.filter(
+        (p) => !confirmedPlatforms.has(p),
     );
 
-    for (const username of verifiableUsernames) {
-        console.log(`  🔍 Checking username: "${username}"...`);
+    console.log(
+        `🔎 Phase 2: Filling gaps — ${candidateUsernames.length} candidate username(s), ${missingPlatforms.length} uncovered platform(s)`,
+    );
+    console.log(
+        `   Already confirmed: ${Array.from(confirmedPlatforms).join(", ") || "none"}`,
+    );
+    console.log(
+        `   Missing platforms: ${missingPlatforms.join(", ") || "none"}\n`,
+    );
+
+    // Track which platforms get filled during Phase 2 so we shrink the target list
+    const remainingPlatforms = new Set(missingPlatforms);
+
+    for (const username of candidateUsernames) {
+        if (remainingPlatforms.size === 0) {
+            console.log(`  ✅ All platforms covered, stopping Phase 2 early`);
+            break;
+        }
+
+        const targetPlatforms = Array.from(remainingPlatforms);
+        console.log(
+            `  🔍 Checking "${username}" on ${targetPlatforms.length} missing platform(s)...`,
+        );
+
         try {
-            const result = await searchUsername(username);
+            const result = await searchUsernameOnPlatforms(username, targetPlatforms);
             if (result.found) {
                 for (const profile of result.profiles) {
                     if (!profile.found) continue;
 
-                    // Skip platforms already confirmed in Phase 1
-                    if (confirmedPlatforms.has(profile.platform)) continue;
-
                     const alreadyFound = discoveredProfiles.some(
-                        (p) => p.platform === profile.platform && p.url === profile.url
+                        (p) => p.platform === profile.platform && p.url === profile.url,
                     );
                     if (!alreadyFound) {
                         console.log(
-                            `    ✅ NEW: ${profile.platform} (${profile.confidence} confidence)`
+                            `    ✅ NEW: ${profile.platform} (${profile.confidence} confidence)`,
                         );
                         discoveredProfiles.push(profile);
-                        confirmedPlatforms.add(profile.platform);
+
+                        // Update identity map and shrink remaining platforms
+                        identityMap.set(profile.platform, {
+                            username: username,
+                            confidence: profile.confidence || "medium",
+                            source: "phase2-check",
+                        });
+                        remainingPlatforms.delete(profile.platform);
                     }
                 }
             }
         } catch (error) {
             console.log(
-                `    ⚠️ Error checking "${username}": ${error instanceof Error ? error.message : error}`
+                `    ⚠️ Error checking "${username}": ${error instanceof Error ? error.message : error}`,
             );
         }
     }
 
+    // ══════════════════════════════════════════════════
     // MERGE & DEDUPLICATE
+    // ══════════════════════════════════════════════════
+
     const platformMap = new Map<string, ProfileResult>();
     for (const profile of discoveredProfiles) {
         if (!profile.found) continue;
@@ -275,22 +397,29 @@ export async function searchPersonByName(
         );
     });
 
+    // Convert identity map to serializable form
+    const serializedIdentityMap: IdentityMap = {};
+    identityMap.forEach((value, key) => {
+        serializedIdentityMap[key] = value;
+    });
+
     console.log(`\n✅ ============================================`);
     console.log(`✅ PERSON SEARCH COMPLETE: "${fullName}"`);
     console.log(
-        `✅ Discovered usernames: ${Array.from(discoveredUsernames).join(", ")}`
+        `✅ Identity map: ${Object.entries(serializedIdentityMap).map(([p, id]) => `${p}→${id.username}`).join(", ")}`,
     );
     console.log(`✅ Total profiles found: ${finalProfiles.length}`);
     console.log(
-        `✅ High confidence: ${finalProfiles.filter((p) => p.confidence === "high").length}`
+        `✅ High confidence: ${finalProfiles.filter((p) => p.confidence === "high").length}`,
     );
     console.log(
-        `✅ Medium confidence: ${finalProfiles.filter((p) => p.confidence === "medium").length}`
+        `✅ Medium confidence: ${finalProfiles.filter((p) => p.confidence === "medium").length}`,
     );
     console.log(`✅ ============================================\n`);
 
     return {
         found: finalProfiles.length > 0,
         profiles: finalProfiles,
+        identityMap: serializedIdentityMap,
     };
 }

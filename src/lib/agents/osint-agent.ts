@@ -8,6 +8,7 @@ import { gatherEmailIntelligence } from "./tools/email-intel";
 import { gatherDomainIntelligence } from "./tools/domain-intel";
 import { gatherPhoneIntelligence } from "./tools/phone-intel";
 import { searchUsername } from "./tools/username-search";
+import { searchUsernameOnPlatforms, ALL_PLATFORM_NAMES } from "./tools/username-search";
 import { searchPersonByName } from "./tools/person-search";
 import { extractEmails, extractDomains } from "./tools/osint-tools";
 
@@ -30,6 +31,9 @@ export class OsintAgent extends BaseAgent {
 
       const pendingTargets: OsintTarget[] = [];
       const processedTargets = new Set<string>();
+
+      // Track platforms already confirmed across all person searches
+      const globalConfirmedPlatforms = new Set<string>();
 
       // Seed initial target
       let initialType: OsintTarget["type"] = "username";
@@ -104,39 +108,62 @@ export class OsintAgent extends BaseAgent {
           if (personRes?.found) {
             results.profiles.push(...personRes.profiles.map((p: any) => ({ ...p, provenance })));
 
-            // Pivot: If person query resolves to a credible username, add it to queue
-            const medHighProfile = personRes.profiles.filter(
-              (p: any) => p.confidence === "high" || p.confidence === "medium"
-            );
-            if (medHighProfile.length > 0 && currentTarget.depth < MAX_DEPTH) {
-              const pivotUsernames = new Set<string>();
-              medHighProfile.forEach((p: any) => {
-                if (p.url.includes("linkedin.com/in/")) {
-                  pivotUsernames.add(p.url.split("/in/")[1].replace(/\/+$/, ""));
-                } else if (p.url.includes("github.com/")) {
-                  pivotUsernames.add(p.url.split("github.com/")[1].replace(/\/+$/, ""));
-                } else if (p.url.includes("x.com/")) {
-                  pivotUsernames.add(p.url.split("x.com/")[1].replace(/\/+$/, ""));
-                }
-              });
+            // Merge the identity map into our global confirmed platforms
+            const identityMap = personRes.identityMap || {};
+            for (const platform of Object.keys(identityMap)) {
+              globalConfirmedPlatforms.add(platform);
+            }
 
-              pivotUsernames.forEach((u) => {
-                console.log(`🔄 Pivot: Person resolution yielded likely username '${u}'`);
-                pendingTargets.push({
-                  term: u,
-                  type: "username",
-                  depth: currentTarget.depth + 1,
-                  parent: currentTarget.term,
+            // Pivot: Only add username targets for platforms NOT yet confirmed
+            if (currentTarget.depth < MAX_DEPTH) {
+              const pivotUsernames = new Set<string>();
+
+              // Extract unique usernames from the identity map
+              for (const [_platform, identity] of Object.entries(identityMap)) {
+                pivotUsernames.add(identity.username);
+              }
+
+              // Determine which platforms still need searching
+              const missingPlatforms = ALL_PLATFORM_NAMES.filter(
+                (p) => !globalConfirmedPlatforms.has(p)
+              );
+
+              if (missingPlatforms.length > 0 && pivotUsernames.size > 0) {
+                console.log(
+                  `🔄 Pivot: ${pivotUsernames.size} username(s) from identity map, ${missingPlatforms.length} platforms still missing`
+                );
+
+                pivotUsernames.forEach((u) => {
+                  console.log(`   🔄 Queuing targeted search for "${u}" on ${missingPlatforms.length} missing platforms`);
+                  pendingTargets.push({
+                    term: u,
+                    type: "username",
+                    depth: currentTarget.depth + 1,
+                    parent: currentTarget.term,
+                    targetPlatforms: [...missingPlatforms],
+                  });
                 });
-              });
+              } else {
+                console.log(`✅ All platforms covered by person search — no pivot needed`);
+              }
             }
           }
         }
         else if (currentTarget.type === "username") {
-          const userRes = await searchUsername(currentTarget.term);
+          // Use targeted search if targetPlatforms is specified, otherwise search all
+          const userRes = currentTarget.targetPlatforms
+            ? await searchUsernameOnPlatforms(currentTarget.term, currentTarget.targetPlatforms)
+            : await searchUsername(currentTarget.term);
 
           if (userRes.found) {
             results.profiles.push(...userRes.profiles.map((p: any) => ({ ...p, provenance, username: currentTarget.term })));
+
+            // Update global confirmed platforms with any new finds
+            for (const p of userRes.profiles) {
+              if (p.found) {
+                globalConfirmedPlatforms.add(p.platform);
+              }
+            }
 
             // Pivot evaluation: check profiles 'data' / 'bio' for extracting emails or domains
             if (currentTarget.depth < MAX_DEPTH) {

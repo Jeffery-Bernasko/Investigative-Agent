@@ -95,6 +95,8 @@ export interface OsintTarget {
   type: "person" | "username" | "email" | "domain" | "phone";
   depth: number;
   parent?: string;
+  /** When set, username searches only check these platforms (used for gap-filling after person search). */
+  targetPlatforms?: string[];
 }
 
 // OSINT Findings

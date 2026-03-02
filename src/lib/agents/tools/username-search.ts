@@ -4,28 +4,37 @@
 import { validateProfile } from "./platform-validator";
 import { searchWithTavily } from "./tavily-search";
 
+type ProfileResult = {
+    platform: string;
+    url: string;
+    found: boolean;
+    confidence?: "high" | "medium" | "low";
+    checkedAt?: Date;
+};
+
+interface PlatformConfig {
+    name: string;
+    urlTemplate: string;
+    useAPI?: boolean;
+    validate?: boolean;
+}
+
+/** Canonical list of all platform names this module knows about. */
+export const ALL_PLATFORM_NAMES: string[] = [
+    "GitHub", "X", "Instagram", "LinkedIn", "Reddit", "Medium",
+    "YouTube", "TikTok", "Facebook", "Twitch", "Discord", "Telegram",
+    "Pinterest", "Snapchat", "Dev.to", "Stack Overflow", "HackerNews",
+    "Mastodon", "Patreon", "Behance",
+];
+
 /** Strip @ prefix and whitespace from a raw username. */
 export function cleanUsername(username: string): string {
     return username.replace(/^@/, "").trim().toLowerCase();
 }
 
-/** Enhanced username search with strict validation and Tavily enrichment. */
-export async function searchUsername(rawUsername: string): Promise<{
-    found: boolean;
-    profiles: Array<{
-        platform: string;
-        url: string;
-        found: boolean;
-        confidence?: "high" | "medium" | "low";
-        checkedAt?: Date;
-    }>;
-}> {
-    const username = cleanUsername(rawUsername);
-    console.log(
-        `🔍 Searching for username: ${username} (cleaned from: ${rawUsername})`
-    );
-
-    const platforms = [
+/** Build platform check configs for a given username, optionally filtered to specific platforms. */
+function buildPlatformConfigs(username: string, filterPlatforms?: string[]): PlatformConfig[] {
+    const all: PlatformConfig[] = [
         { name: "GitHub", urlTemplate: `https://github.com/${username}`, useAPI: true },
         { name: "X", urlTemplate: `https://x.com/${username}`, validate: true },
         { name: "Instagram", urlTemplate: `https://instagram.com/${username}`, validate: true },
@@ -47,6 +56,30 @@ export async function searchUsername(rawUsername: string): Promise<{
         { name: "Patreon", urlTemplate: `https://patreon.com/${username}`, validate: true },
         { name: "Behance", urlTemplate: `https://behance.net/${username}`, validate: true },
     ];
+
+    if (!filterPlatforms) return all;
+
+    const filterSet = new Set(filterPlatforms);
+    return all.filter((p) => filterSet.has(p.name));
+}
+
+/** Enhanced username search with strict validation and Tavily enrichment. */
+export async function searchUsername(rawUsername: string): Promise<{
+    found: boolean;
+    profiles: Array<{
+        platform: string;
+        url: string;
+        found: boolean;
+        confidence?: "high" | "medium" | "low";
+        checkedAt?: Date;
+    }>;
+}> {
+    const username = cleanUsername(rawUsername);
+    console.log(
+        `🔍 Searching for username: ${username} (cleaned from: ${rawUsername})`
+    );
+
+    const platforms = buildPlatformConfigs(username);
 
     console.log(
         `\n📡 Checking ${platforms.length} platforms with strict validation...`
@@ -243,6 +276,102 @@ export async function searchUsername(rawUsername: string): Promise<{
     );
     console.log(
         `  Medium confidence: ${foundProfiles.filter((p) => p.confidence === "medium").length}`
+    );
+
+    return {
+        found: foundProfiles.length > 0,
+        profiles: foundProfiles,
+    };
+}
+
+/**
+ * Search for a username on a SPECIFIC subset of platforms.
+ * Used by person-search Phase 2 to only fill platform gaps.
+ */
+export async function searchUsernameOnPlatforms(
+    rawUsername: string,
+    targetPlatforms: string[],
+): Promise<{ found: boolean; profiles: ProfileResult[] }> {
+    const username = cleanUsername(rawUsername);
+    console.log(
+        `🔍 Targeted search: "${username}" on ${targetPlatforms.length} platform(s)`,
+    );
+
+    const platforms = buildPlatformConfigs(username, targetPlatforms);
+
+    if (platforms.length === 0) {
+        console.log(`  ⚠️ No matching platforms to check`);
+        return { found: false, profiles: [] };
+    }
+
+    const checkPromises = platforms.map(async (platform) => {
+        try {
+            if (platform.useAPI && platform.name === "GitHub") {
+                try {
+                    const response = await fetch(
+                        `https://api.github.com/users/${username}`,
+                        {
+                            headers: { Accept: "application/vnd.github.v3+json" },
+                            signal: AbortSignal.timeout(5000),
+                        },
+                    );
+                    const found = response.ok;
+                    if (found) console.log(`  ✅ ${platform.name}: Found (API)`);
+                    else console.log(`  ❌ ${platform.name}: Not found (API)`);
+                    return {
+                        platform: platform.name,
+                        url: platform.urlTemplate,
+                        found,
+                        confidence: found ? ("high" as const) : ("low" as const),
+                        checkedAt: new Date(),
+                    };
+                } catch {
+                    return {
+                        platform: platform.name,
+                        url: platform.urlTemplate,
+                        found: false,
+                        confidence: "low" as const,
+                        checkedAt: new Date(),
+                    };
+                }
+            }
+
+            const validation = await validateProfile(
+                platform.urlTemplate,
+                platform.name,
+                username,
+            );
+
+            if (validation.exists) {
+                console.log(`  ✅ ${platform.name}: Found (${validation.confidence})`);
+            } else {
+                console.log(`  ❌ ${platform.name}: Not found`);
+            }
+
+            return {
+                platform: platform.name,
+                url: platform.urlTemplate,
+                found: validation.exists,
+                confidence: validation.confidence,
+                checkedAt: new Date(),
+            };
+        } catch (error: any) {
+            console.error(`  ⚠️ ${platform.name}: ${error.message}`);
+            return {
+                platform: platform.name,
+                url: platform.urlTemplate,
+                found: false,
+                confidence: "low" as const,
+                checkedAt: new Date(),
+            };
+        }
+    });
+
+    const results = await Promise.all(checkPromises);
+    const foundProfiles = results.filter((p) => p.found);
+
+    console.log(
+        `  📊 Targeted check: ${foundProfiles.length}/${platforms.length} found`,
     );
 
     return {

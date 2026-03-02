@@ -11,6 +11,7 @@ import {
   Brain,
   Network,
   FileText,
+  FileDown,
   CheckCircle2,
   TrendingUp,
   ExternalLink,
@@ -19,6 +20,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { generateInvestigationReport } from "@/lib/reports/report-generator";
 
 interface InvestigationResult {
   investigationId: string;
@@ -114,6 +116,21 @@ export function InvestigateForm() {
   const [isInvestigating, setIsInvestigating] = useState(false);
   const [result, setResult] = useState<InvestigationResult | null>(null);
   const [progress, setProgress] = useState<string>("");
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  const handleDownloadPdf = async () => {
+    if (!result) return;
+    setIsGeneratingPdf(true);
+    try {
+      generateInvestigationReport(result as any);
+      toast.success("PDF report downloaded!");
+    } catch (err: any) {
+      console.error("PDF generation error:", err);
+      toast.error("Failed to generate PDF", { description: err.message });
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
 
   const handleInvestigate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -275,9 +292,24 @@ export function InvestigateForm() {
                   </div>
                 </div>
 
-                {result.analysis && (
-                  <RiskScoreGauge score={result.analysis.riskScore} />
-                )}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleDownloadPdf}
+                    disabled={isGeneratingPdf}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition-all text-sm font-medium disabled:opacity-50"
+                  >
+                    {isGeneratingPdf ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <FileDown className="w-4 h-4" />
+                    )}
+                    {isGeneratingPdf ? "Generating..." : "Download PDF Report"}
+                  </button>
+
+                  {result.analysis && (
+                    <RiskScoreGauge score={result.analysis.riskScore} />
+                  )}
+                </div>
               </div>
 
               {result.analysis && (

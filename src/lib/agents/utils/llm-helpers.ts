@@ -279,7 +279,7 @@ Respond with ONLY a JSON object:
 }
 
 /**
- * Generate a concise executive summary via LLM.
+ * Generate a comprehensive executive summary via LLM.
  */
 export async function generateSummary(
     llm: OllamaClient,
@@ -287,36 +287,96 @@ export async function generateSummary(
     intent: Intent,
     riskScore: number
 ): Promise<string> {
-    const prompt = `
-Generate a concise executive summary for this OSINT investigation:
+    // Build platform breakdown
+    const platformCounts: Record<string, number> = {};
+    const highConfPlatforms: string[] = [];
+    const medConfPlatforms: string[] = [];
+    for (const p of findings.profiles) {
+        if (p.found) {
+            platformCounts[p.platform] = (platformCounts[p.platform] || 0) + 1;
+            if (p.confidence === "high") highConfPlatforms.push(p.platform);
+            else if (p.confidence === "medium") medConfPlatforms.push(p.platform);
+        }
+    }
+    const platformList = Object.entries(platformCounts)
+        .map(([name, count]) => count > 1 ? `${name} (${count})` : name)
+        .join(", ");
 
-Target: ${intent.target}
-Type: ${intent.targetType}
-Profiles Found: ${findings.profiles.length}
-Platforms: ${findings.profiles.map((p) => p.platform).join(", ")}
-Emails Found: ${findings.emails.length}
-Domains Found: ${findings.domains.length}
-Risk Score: ${riskScore}/10
+    const riskLabel = riskScore >= 7 ? "HIGH" : riskScore >= 4 ? "MODERATE" : "LOW";
 
-Additional Intelligence:
-${findings.metadata.emailIntel ? `- Email breaches: ${findings.metadata.emailIntel.breaches}` : ""}
-${findings.metadata.domainIntel ? `- Domain vulnerabilities: ${findings.metadata.domainIntel.shodanVulns}` : ""}
-${findings.metadata.phoneIntel ? `- Phone country: ${findings.metadata.phoneIntel.country}` : ""}
+    const prompt = `You are a senior threat intelligence analyst writing a professional investigation report.
 
-Provide a 2-3 sentence summary highlighting key findings and risks.
-`;
+Write a detailed executive summary for the following OSINT investigation. Write in natural flowing paragraphs — DO NOT use JSON, bullet points, or any structured format. Write as prose only.
+
+=== INVESTIGATION DATA ===
+Subject: ${intent.target}
+Subject Type: ${intent.targetType}
+Total Profiles Discovered: ${findings.profiles.filter(p => p.found).length}
+High-Confidence Profiles: ${highConfPlatforms.length} (${highConfPlatforms.join(", ") || "none"})
+Medium-Confidence Profiles: ${medConfPlatforms.length} (${medConfPlatforms.join(", ") || "none"})
+Platforms: ${platformList || "none"}
+Emails Discovered: ${findings.emails.length}
+Domains Discovered: ${findings.domains.length}
+Risk Score: ${riskScore}/10 (${riskLabel})
+${findings.metadata.emailIntel ? `Email Intelligence: ${findings.metadata.emailIntel.breaches || 0} data breaches found, valid=${findings.metadata.emailIntel.valid}, disposable=${findings.metadata.emailIntel.disposable}` : ""}
+${findings.metadata.domainIntel ? `Domain Intelligence: ${findings.metadata.domainIntel.shodanPorts || 0} open ports, ${findings.metadata.domainIntel.shodanVulns || 0} known vulnerabilities, SSL valid=${findings.metadata.domainIntel.ssl}` : ""}
+${findings.metadata.phoneIntel ? `Phone Intelligence: Country=${findings.metadata.phoneIntel.country}, Valid=${findings.metadata.phoneIntel.valid}` : ""}
+=== END DATA ===
+
+Your summary MUST cover these areas in 3-4 paragraphs:
+
+1. OVERVIEW: Who is the subject, what type of investigation was conducted, and what is the overall scope of their digital footprint.
+
+2. DIGITAL PRESENCE ANALYSIS: Describe which platforms they were found on, emphasize the high-confidence findings, note the breadth of their online presence, and highlight any notable patterns (e.g., heavy social media usage, professional vs personal accounts).
+
+3. RISK ASSESSMENT: Explain the ${riskLabel} risk score of ${riskScore}/10, what contributes to it (number of exposed profiles, data breaches, vulnerabilities), and what this means for the subject's security posture.
+
+4. KEY FINDINGS: Highlight the most significant discoveries — any data breaches, exposed infrastructure, cross-platform identity links, or notable absences.
+
+IMPORTANT: Write ONLY plain text paragraphs. Do NOT wrap your response in JSON, code blocks, or any structured format. Do NOT start with a heading or label. Begin directly with the first paragraph.`;
 
     const response = await llm.chat.completions.create({
         messages: [
             {
                 role: "system",
                 content:
-                    "You are a investigative analyst writing executive summaries.",
+                    "You are a senior investigative intelligence analyst. You write detailed, professional reports in plain English prose. You NEVER output JSON, bullet points, or structured data — only natural flowing paragraphs.",
             },
             { role: "user", content: prompt },
         ],
-        temperature: 0.2,
+        temperature: 0.3,
+        max_tokens: 800,
     });
 
-    return response.choices[0].message.content || "No summary available.";
+    let summary = response.choices[0].message.content || "No summary available.";
+
+    // Strip any JSON wrapping the LLM might add despite instructions
+    summary = summary.trim();
+    // Remove markdown code fences if present
+    summary = summary.replace(/^```[\s\S]*?```$/gm, "").trim();
+    // If the response looks like JSON, try to extract the text value
+    if (summary.startsWith("{")) {
+        try {
+            const parsed = JSON.parse(summary);
+            // Dig into any nested structure to find the text
+            const extractText = (obj: any): string => {
+                if (typeof obj === "string") return obj;
+                if (typeof obj === "object" && obj !== null) {
+                    for (const val of Object.values(obj)) {
+                        const result = extractText(val);
+                        if (result && result.length > 50) return result;
+                    }
+                }
+                return "";
+            };
+            const extracted = extractText(parsed);
+            if (extracted) summary = extracted;
+        } catch {
+            // Not valid JSON, use as-is
+        }
+    }
+    // Remove leading/trailing quotes
+    summary = summary.replace(/^["']|["']$/g, "").trim();
+
+    return summary;
 }

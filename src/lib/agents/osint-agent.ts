@@ -11,6 +11,7 @@ import { searchUsername } from "./tools/username-search";
 import { searchUsernameOnPlatforms, ALL_PLATFORM_NAMES } from "./tools/username-search";
 import { searchPersonByName } from "./tools/person-search";
 import { extractEmails, extractDomains } from "./tools/osint-tools";
+import { verifyProfile } from "./tools/profile-verification";
 
 export class OsintAgent extends BaseAgent {
   async execute(task: Task): Promise<AgentResult> {
@@ -206,6 +207,50 @@ export class OsintAgent extends BaseAgent {
       }
 
       console.log(`\n✅ OSINT AGENT: Iterative Task Complete\n`);
+
+      // ── Profile Verification ──────────────────────────────
+      const verificationEnabled = process.env.VERIFICATION_ENABLED !== "false";
+      if (verificationEnabled && results.profiles.length > 0) {
+        console.log(`\n🔍 Verifying ${results.profiles.length} profiles...`);
+
+        const verifiedProfiles: any[] = [];
+        const rejectedProfiles: any[] = [];
+
+        for (const profile of results.profiles) {
+          const verification = await verifyProfile(
+            task.target,
+            profile,
+            verifiedProfiles // cross-reference against already-verified
+          );
+
+          profile.verification = verification;
+          profile.verificationConfidence = verification.confidence;
+
+          if (verification.isLikelyMatch) {
+            verifiedProfiles.push(profile);
+            console.log(`  ✅ ${profile.platform}: ${verification.confidence}% confidence`);
+          } else {
+            rejectedProfiles.push(profile);
+            console.log(`  ❌ ${profile.platform}: Rejected - ${verification.reasoning}`);
+          }
+        }
+
+        results.profiles = verifiedProfiles;
+        results.metadata.verification = {
+          totalScanned: verifiedProfiles.length + rejectedProfiles.length,
+          verified: verifiedProfiles.length,
+          rejected: rejectedProfiles.length,
+          falsePositiveRate: Math.round(
+            (rejectedProfiles.length /
+              Math.max(verifiedProfiles.length + rejectedProfiles.length, 1)) *
+              100
+          ),
+        };
+
+        console.log(`\n✅ Verification complete:`);
+        console.log(`   Verified: ${verifiedProfiles.length}`);
+        console.log(`   Rejected: ${rejectedProfiles.length} false positives filtered`);
+      }
 
       return {
         agentName: this.name,

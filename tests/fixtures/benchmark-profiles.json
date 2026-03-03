@@ -1,0 +1,120 @@
+{
+  "commonNames": [
+    {
+      "target": "John Smith",
+      "truePositives": [
+        {
+          "platform": "GitHub",
+          "url": "https://github.com/johnsmith",
+          "data": { "name": "John Smith", "location": "New York", "company": "Acme Inc" }
+        },
+        {
+          "platform": "LinkedIn",
+          "url": "https://linkedin.com/in/john-smith-dev",
+          "data": { "name": "John Smith", "location": "New York", "company": "Acme Inc" }
+        },
+        {
+          "platform": "Twitter",
+          "url": "https://x.com/johnsmith",
+          "data": { "name": "John Smith", "location": "New York" }
+        }
+      ],
+      "falsePositives": [
+        {
+          "platform": "GitHub",
+          "url": "https://github.com/johnsmith-au",
+          "data": { "name": "John Smith", "location": "Sydney, Australia", "company": "OtherCorp" }
+        },
+        {
+          "platform": "LinkedIn",
+          "url": "https://linkedin.com/in/john-smith-uk",
+          "data": { "name": "John Smith", "location": "London, UK", "company": "BritishFirm Ltd" }
+        },
+        {
+          "platform": "Instagram",
+          "url": "https://instagram.com/jsmith_tx",
+          "data": { "name": "John Smith", "location": "Houston, TX" }
+        }
+      ],
+      "expectedAccuracy": 0.75
+    }
+  ],
+  "uniqueNames": [
+    {
+      "target": "Jeffery Bernasko",
+      "truePositives": [
+        {
+          "platform": "GitHub",
+          "url": "https://github.com/jeffery-bernasko",
+          "data": { "name": "Jeffery Bernasko", "company": "SEPTO", "location": "United States" }
+        },
+        {
+          "platform": "LinkedIn",
+          "url": "https://linkedin.com/in/jefferybernasko",
+          "data": { "name": "Jeffery Bernasko", "company": "SEPTO", "location": "United States" }
+        }
+      ],
+      "falsePositives": [
+        {
+          "platform": "GitHub",
+          "url": "https://github.com/jeffrey-bernasco",
+          "data": { "name": "Jeffrey Bernasco", "location": "Netherlands" }
+        }
+      ],
+      "expectedAccuracy": 0.95
+    }
+  ],
+  "edgeCases": [
+    {
+      "description": "Abbreviated first name",
+      "target": "John Smith",
+      "profile": {
+        "platform": "Twitter",
+        "url": "https://x.com/jsmith",
+        "data": { "name": "J. Smith" }
+      },
+      "expectedMatch": true
+    },
+    {
+      "description": "Name with diacritics",
+      "target": "José García",
+      "profile": {
+        "platform": "GitHub",
+        "url": "https://github.com/josegarcia",
+        "data": { "name": "Jose Garcia" }
+      },
+      "expectedMatch": true
+    },
+    {
+      "description": "Spelling variant — Jeffrey vs Jeffery",
+      "target": "Jeffrey Bernasko",
+      "profile": {
+        "platform": "LinkedIn",
+        "url": "https://linkedin.com/in/jefferybernasko",
+        "data": { "name": "Jeffery Bernasko" }
+      },
+      "expectedMatch": true
+    },
+    {
+      "description": "Completely different person",
+      "target": "John Smith",
+      "profile": {
+        "platform": "GitHub",
+        "url": "https://github.com/alicenguyen",
+        "data": { "name": "Alice Nguyen" }
+      },
+      "expectedMatch": false
+    },
+    {
+      "description": "No name data in profile",
+      "target": "John Smith",
+      "profile": {
+        "platform": "GitHub",
+        "url": "https://github.com/unknown123",
+        "username": "unknown123",
+        "data": {}
+      },
+      "expectedMatch": false
+    }
+  ]
+}

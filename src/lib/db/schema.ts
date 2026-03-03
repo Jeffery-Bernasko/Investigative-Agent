@@ -620,6 +620,43 @@ export const investigationTraces = pgTable("investigation_traces", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ============================================
+// Investigation Metrics (Phase 5: Quality Assurance)
+// ============================================
+
+export const investigationMetrics = pgTable("investigation_metrics", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  investigationId: text("investigation_id").notNull(),
+  userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+
+  // Quantitative metrics
+  falsePositiveRate: real("false_positive_rate"),        // percentage (0-100)
+  investigationDurationMs: integer("investigation_duration_ms"),
+  profileCoverage: real("profile_coverage"),             // percentage (0-100)
+  verificationAccuracy: real("verification_accuracy"),   // percentage (0-100)
+  averageConfidence: real("average_confidence"),         // 0-100
+
+  // Tier funnel metrics
+  tier1PassRate: real("tier1_pass_rate"),
+  tier2CandidateCount: integer("tier2_candidate_count"),
+  tier3AcceptanceRate: real("tier3_acceptance_rate"),
+
+  // Verification summary
+  totalProfilesScanned: integer("total_profiles_scanned"),
+  verifiedProfiles: integer("verified_profiles"),
+  rejectedProfiles: integer("rejected_profiles"),
+
+  // Investigation depth
+  depth: text("depth"),                   // "quick" | "standard" | "deep"
+  disambiguationTriggered: boolean("disambiguation_triggered").default(false),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  investigationIdIdx: index("inv_metrics_investigation_id_idx").on(table.investigationId),
+  userIdIdx: index("inv_metrics_user_id_idx").on(table.userId),
+  createdAtIdx: index("inv_metrics_created_at_idx").on(table.createdAt),
+}));
+
 // Type Exports
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -639,4 +676,6 @@ export type JobQueue = typeof jobQueue.$inferSelect;
 export type NewJobQueue = typeof jobQueue.$inferInsert;
 export type Relationship = typeof relationships.$inferSelect;
 export type NewRelationship = typeof relationships.$inferInsert;
+export type InvestigationMetrics = typeof investigationMetrics.$inferSelect;
+export type NewInvestigationMetrics = typeof investigationMetrics.$inferInsert;
 

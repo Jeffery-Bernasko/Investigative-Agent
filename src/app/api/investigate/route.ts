@@ -13,9 +13,12 @@ export async function POST(req: NextRequest) {
     }
 
     // Parse request
-    const { query } = await req.json();
+    const body = await req.json();
+    const { query, clarification } = body as { query?: string; clarification?: string };
 
-    if (!query || typeof query !== "string") {
+    const effectiveQuery = clarification ?? query;
+
+    if (!effectiveQuery || typeof effectiveQuery !== "string") {
       return NextResponse.json(
         { error: "Query string required" },
         { status: 400 }
@@ -27,7 +30,20 @@ export async function POST(req: NextRequest) {
 
     // Run autonomous investigation
     console.log(`\n Starting autonomous investigation for user ${session.user.id}`);
-    const result = await orchestrator.investigate(query, session.user.id);
+    const result = await orchestrator.investigate(effectiveQuery, session.user.id);
+
+    // When the system needs user clarification, return 202 with the disambiguation request
+    if (result.status === "needs_clarification") {
+      return NextResponse.json(
+        {
+          success: false,
+          status: "needs_clarification",
+          investigation: result,
+          disambiguationRequest: result.disambiguationRequest,
+        },
+        { status: 202 }
+      );
+    }
 
     return NextResponse.json({
       success: true,
@@ -55,10 +71,14 @@ export async function GET() {
   return NextResponse.json({
     service: "Autonomous Investigation Orchestrator",
     status: "online",
-    version: "1.0.0",
+    version: "2.0.0",
     capabilities: [
       "Natural language intent parsing",
       "Autonomous OSINT gathering",
+      "Tiered watchdog profile verification",
+      "Adaptive investigation depth",
+      "Human-in-the-loop disambiguation",
+      "Multi-platform recent activity extraction",
       "AI-powered analysis",
       "Risk scoring",
       "Automated reporting",

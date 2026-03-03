@@ -23,6 +23,9 @@ import { AnalysisAgent } from "./analysis-agent";
 import { getSafeErrorInfo } from "./utils/errors";
 import { parseIntent, createPlan, evaluateStepResults, replanFromContext } from "./utils/llm-helpers";
 import { createDefaultRegistry, ToolRegistry } from "./tool-registry";
+import { determineInvestigationDepth } from "./adaptive-analyzer";
+import { buildDisambiguationCandidates, createDisambiguationRequest, DisambiguationRequest } from "./disambiguation";
+import { DISAMBIGUATION_THRESHOLD } from "./config";
 
 // Trace Collector — captures step-level telemetry
 class TraceCollector {
@@ -223,6 +226,24 @@ export class OrchestratorAgent {
         investigationId,
       };
 
+      // Bootstrap 4: Adaptive depth decision
+      console.log(`\n🧠 Bootstrap 4: Determining investigation depth...`);
+      const depthDecision = determineInvestigationDepth(
+        intent.target,
+        ctx.findings,
+        intent.targetType
+      );
+      console.log(
+        `✅ Depth decision: ${depthDecision.depth} — ${depthDecision.reasoning}`
+      );
+
+      // If the LLM-assigned scope disagrees with our heuristic, use the deeper one
+      const scopeOrder = { quick: 0, standard: 1, deep: 2 };
+      if (scopeOrder[depthDecision.depth] > scopeOrder[intent.scope]) {
+        intent.scope = depthDecision.depth;
+        console.log(`🔄 Scope upgraded to "${intent.scope}" based on adaptive depth analysis`);
+      }
+
       // Sort steps by priority, then by step number
       let sortedSteps = [...plan.steps].sort((a, b) =>
         a.priority !== b.priority ? a.priority - b.priority : a.step - b.step
@@ -320,6 +341,52 @@ export class OrchestratorAgent {
         trace.addError(`Max iterations (${MAX_ITERATIONS}) reached`);
       }
 
+      // ── Confidence checkpoint (Hybrid Autonomy) ───────────────────────────
+      // When overall confidence is below the threshold AND there are multiple
+      // candidates, return a disambiguation request instead of a partial result.
+      const overallConfidence = ctx.findings.metadata?.osintAgentConfidence as number | undefined;
+      const verificationSummary = (ctx.findings.metadata as any)?.verificationSummary;
+
+      if (
+        depthDecision.needsDisambiguation ||
+        (overallConfidence !== undefined && overallConfidence < DISAMBIGUATION_THRESHOLD)
+      ) {
+        const profiles = ctx.findings.profiles ?? [];
+        const candidates = buildDisambiguationCandidates(profiles, intent.target);
+
+        // Only surface disambiguation if there are genuinely distinct candidates
+        if (candidates.length >= 2) {
+          console.log(
+            `\n🔀 Confidence (${overallConfidence ?? "unknown"}) below threshold (${DISAMBIGUATION_THRESHOLD}) — returning disambiguation request`
+          );
+          const duration = Math.round((Date.now() - startTime) / 1000);
+          const finalTrace = trace.finalize("partial");
+          await this.persistTrace(finalTrace, entity.id);
+
+          return {
+            investigationId,
+            entity,
+            status: "needs_clarification",
+            findings: ctx.findings,
+            analysis: ctx.analysis,
+            recommendations: ctx.recommendations,
+            relationships: ctx.relationships,
+            networkAnalysis: ctx.networkAnalysis,
+            graphData: ctx.graphData,
+            deepAnalysis: ctx.deepAnalysis,
+            trace: finalTrace,
+            duration,
+            createdAt: new Date(),
+            disambiguationRequest: createDisambiguationRequest(candidates, {
+              findings: ctx.findings,
+              analysis: ctx.analysis,
+            }),
+            depthDecision,
+            verificationSummary,
+          };
+        }
+      }
+
       // ── Finalize ───────────────────────────────────────────────
       const duration = Math.round((Date.now() - startTime) / 1000);
       const finalTrace = trace.finalize("completed");
@@ -345,6 +412,8 @@ export class OrchestratorAgent {
         trace: finalTrace,
         duration,
         createdAt: new Date(),
+        depthDecision,
+        verificationSummary,
       };
     } catch (error: unknown) {
       const err = getSafeErrorInfo(error);

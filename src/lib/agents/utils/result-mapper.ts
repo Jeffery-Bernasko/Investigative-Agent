@@ -138,7 +138,13 @@ export function mapAgentResultToFindings(agentData: any): OsintFindings {
  */
 export function computeFindingsStats(
     findings: OsintFindings,
-    osintAgentConfidence?: number
+    osintAgentConfidence?: number,
+    verificationSummary?: {
+        totalScanned: number;
+        verified: number;
+        rejected: number;
+        falsePositiveRate: number;
+    }
 ): void {
     findings.metadata.searchedPlatforms = 20;
     findings.metadata.foundPlatforms = findings.profiles.filter(
@@ -151,4 +157,7 @@ export function computeFindingsStats(
         (p) => p.confidence === "medium"
     ).length;
     findings.metadata.osintAgentConfidence = osintAgentConfidence;
+    if (verificationSummary) {
+        findings.metadata.verificationSummary = verificationSummary;
+    }
 }

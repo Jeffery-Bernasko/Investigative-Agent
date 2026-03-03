@@ -45,7 +45,7 @@ const osintGather: ToolHandler = {
 
         // Map raw agent output → normalized findings and store on context
         ctx.findings = mapAgentResultToFindings(result.data);
-        computeFindingsStats(ctx.findings, result.confidence);
+        computeFindingsStats(ctx.findings, result.confidence, result.data?.verificationSummary);
 
         const profileCount = ctx.findings.profiles.length;
         console.log(`✅ Investigation complete. Found ${profileCount} profiles.`);

@@ -163,7 +163,7 @@ export interface InvestigationTrace {
 export interface InvestigationResult {
   investigationId: string;
   entity: any;
-  status: "completed" | "failed" | "partial";
+  status: "completed" | "failed" | "partial" | "needs_clarification";
   findings: OsintFindings;
   analysis?: {
     riskScore: number;
@@ -178,4 +178,15 @@ export interface InvestigationResult {
   trace?: InvestigationTrace;
   duration: number; // in seconds
   createdAt: Date;
+  /** Set when status is "needs_clarification". */
+  disambiguationRequest?: import("../disambiguation").DisambiguationRequest;
+  /** Adaptive depth decision used for this investigation. */
+  depthDecision?: import("../adaptive-analyzer").DepthDecision;
+  /** Verification summary (false-positive reduction metrics). */
+  verificationSummary?: {
+    totalScanned: number;
+    verified: number;
+    rejected: number;
+    falsePositiveRate: number;
+  };
 }

@@ -14,12 +14,14 @@ import {
     DigitalFootprintAnalysis,
     GeneratedInsight,
 } from "./tools/analysis-tools";
+import { extractRecentActivities, RecentActivityResult } from "./tools/recent-activity-extractor";
 
 export interface AnalysisResult {
     behaviorProfile: BehaviorProfile;
     timeline: TimelineEvent[];
     digitalFootprint: DigitalFootprintAnalysis;
     insights: GeneratedInsight[];
+    recentActivity?: RecentActivityResult;
     summary: string;
     confidence: number;
     analysisDate: Date;
@@ -114,7 +116,21 @@ export class AnalysisAgent extends BaseAgent {
                 `  ✅ High Priority: ${insights.filter((i) => i.priority === "high").length}`
             );
 
-            // 5. Generate Summary
+            // 5. Extract Recent Activity (multi-platform last 3 posts)
+            console.log(`\n📅 Step 5: Extracting recent activity...`);
+            let recentActivity: RecentActivityResult | undefined;
+            try {
+                const profiles = investigationData.findings?.profiles ?? [];
+                recentActivity = await extractRecentActivities(task.target, profiles);
+                console.log(
+                    `  ✅ Recent posts: ${recentActivity.posts.length}, ` +
+                    `dormant platforms: ${recentActivity.dormant.length}`
+                );
+            } catch (err: any) {
+                console.warn(`  ⚠️ Recent activity extraction failed (non-fatal): ${err.message}`);
+            }
+
+            // 6. Generate Summary
             const summary = this.generateSummary(
                 behaviorProfile,
                 digitalFootprint,
@@ -122,7 +138,7 @@ export class AnalysisAgent extends BaseAgent {
                 insights
             );
 
-            // 6. Calculate Confidence
+            // 7. Calculate Confidence
             const confidence = this.calculateConfidence(
                 behaviorProfile,
                 digitalFootprint,
@@ -144,6 +160,7 @@ export class AnalysisAgent extends BaseAgent {
                     timeline,
                     digitalFootprint,
                     insights,
+                    recentActivity,
                     summary,
                     confidence,
                     analysisDate: new Date(),

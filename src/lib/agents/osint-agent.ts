@@ -11,6 +11,7 @@ import { searchUsername } from "./tools/username-search";
 import { searchUsernameOnPlatforms, ALL_PLATFORM_NAMES } from "./tools/username-search";
 import { searchPersonByName } from "./tools/person-search";
 import { extractEmails, extractDomains } from "./tools/osint-tools";
+import { runTieredValidation, buildVerificationSummary } from "./validation-pipeline";
 
 export class OsintAgent extends BaseAgent {
   async execute(task: Task): Promise<AgentResult> {
@@ -205,12 +206,49 @@ export class OsintAgent extends BaseAgent {
         }
       }
 
+      // ── Profile Verification (Tiered Watchdog) ────────────────────────────────
+      const targetType = task.metadata?.targetType as string | undefined;
+      const targetName = targetType === "person" || task.target.includes(" ")
+        ? task.target
+        : task.target;
+
+      const foundProfiles = results.profiles.filter((p: any) => p.found !== false);
+      let verificationSummary: {
+        totalScanned: number;
+        verified: number;
+        rejected: number;
+        falsePositiveRate: number;
+      } | undefined;
+
+      if (foundProfiles.length > 0) {
+        console.log(`\n🛡️ Running tiered verification on ${foundProfiles.length} profile(s)...`);
+        const validationResult = await runTieredValidation(targetName, foundProfiles);
+        const rejectedProfiles = validationResult.rejected;
+        verificationSummary = buildVerificationSummary(validationResult);
+
+        // Replace raw profiles with verified ones; keep unverified in metadata for transparency
+        results.profiles = [
+          ...validationResult.verified,
+          ...results.profiles.filter((p: any) => p.found === false),
+        ];
+        results.metadata.rejectedProfiles = rejectedProfiles;
+        results.metadata.verificationMetrics = validationResult.metrics;
+
+        console.log(
+          `🛡️ Verification complete: ${verificationSummary.verified} accepted, ` +
+          `${verificationSummary.rejected} rejected (false positive rate: ${verificationSummary.falsePositiveRate}%)`
+        );
+      }
+
       console.log(`\n✅ OSINT AGENT: Iterative Task Complete\n`);
 
       return {
         agentName: this.name,
         success: true,
-        data: results,
+        data: {
+          ...results,
+          verificationSummary,
+        },
         confidence: this.calculateOverallConfidence(results),
       };
     } catch (error: any) {

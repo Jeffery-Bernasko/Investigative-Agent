@@ -1,0 +1,43 @@
+{
+  "title": "SEPTO OSINT Scraper Input",
+  "description": "Input configuration for scraping social media profiles",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "targetUrl": {
+      "title": "Target URL",
+      "type": "string",
+      "description": "The URL to scrape (e.g., https://github.com/username)",
+      "editor": "textfield"
+    },
+    "startUrls": {
+      "title": "Start URLs (Array)",
+      "type": "array",
+      "description": "Array of URLs to scrape (alternative to targetUrl)",
+      "editor": "requestListSources",
+      "prefill": [
+        {
+          "url": "https://github.com/octocat"
+        }
+      ]
+    },
+    "headless": {
+      "title": "Headless Mode",
+      "type": "boolean",
+      "description": "Run browser in headless mode",
+      "default": true,
+      "editor": "checkbox"
+    },
+    "blockResources": {
+      "title": "Block Resources",
+      "type": "boolean",
+      "description": "Block images, CSS, and fonts to save bandwidth",
+      "default": true,
+      "editor": "checkbox"
+    }
+  },
+  "anyOf": [
+    { "required": ["targetUrl"] },
+    { "required": ["startUrls"] }
+  ]
+}

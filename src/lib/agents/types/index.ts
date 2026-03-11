@@ -25,7 +25,10 @@ export const PlanStepSchema = z.object({
   action: z.string().describe("What action to take"),
   tool: z.string().describe("Which tool/function to use"),
   priority: z.number().min(1).describe("Priority level (1=highest)"),
-  dependsOn: z.number().optional().describe("Step number this depends on"),
+  dependsOn: z.preprocess(
+    (val) => (Array.isArray(val) ? val[0] ?? undefined : val),
+    z.number().optional(),
+  ).describe("Step number this depends on"),
 });
 
 export const InvestigationPlanSchema = z.object({

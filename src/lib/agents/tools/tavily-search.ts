@@ -1,14 +1,53 @@
 /**
  * Search the web via Tavily API and return normalised results.
  */
+
+/** Default social-media domains used when no custom list is supplied. */
+export const DEFAULT_SOCIAL_DOMAINS: string[] = [
+    // Major social networks
+    "github.com",
+    "x.com",
+    "twitter.com",
+    "instagram.com",
+    "linkedin.com",
+    "facebook.com",
+    "reddit.com",
+    "tiktok.com",
+    "medium.com",
+    "youtube.com",
+    "twitch.tv",
+    "behance.net",
+    "dribbble.com",
+    "soundcloud.com",
+    "pinterest.com",
+    "snapchat.com",
+    "threads.net",
+    "mastodon.social",
+    "quora.com",
+    "dev.to",
+    "stackoverflow.com",
+    "t.me",
+];
+
+export interface TavilySearchOptions {
+    /** Override the default domain whitelist. */
+    includeDomains?: string[];
+    /** Max results to return (default 10). */
+    maxResults?: number;
+}
+
 export async function searchWithTavily(
     query: string,
-    apiKey?: string
+    apiKey?: string,
+    options?: TavilySearchOptions,
 ): Promise<Array<{ title: string; url: string; snippet: string }>> {
     const key = apiKey || process.env.TAVILY_API_KEY;
     if (!key) {
         return [];
     }
+
+    const includeDomains = options?.includeDomains ?? DEFAULT_SOCIAL_DOMAINS;
+    const maxResults = options?.maxResults ?? 10;
 
     try {
         console.log(`🔍 Tavily search: "${query}"`);
@@ -19,18 +58,9 @@ export async function searchWithTavily(
                 api_key: key,
                 query,
                 search_depth: "advanced",
-                max_results: 10,
+                max_results: maxResults,
                 include_answer: false,
-                include_domains: [
-                    "github.com",
-                    "x.com",
-                    "instagram.com",
-                    "linkedin.com",
-                    "facebook.com",
-                    "reddit.com",
-                    "tiktok.com",
-                    "medium.com",
-                ],
+                include_domains: includeDomains,
             }),
         });
 

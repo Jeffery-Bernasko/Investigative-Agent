@@ -146,17 +146,93 @@ export async function validateProfile(
                 return { exists: false, confidence: "low" };
 
             case "TikTok":
+                // TikTok blocks most non-browser requests, rely on Tavily for discovery
+                return { exists: false, confidence: "low" };
+
             case "Twitch":
-            case "Pinterest":
-            case "Discord":
-            case "Telegram":
                 if (
                     lowerHtml.includes("not found") ||
-                    lowerHtml.includes("doesn't exist") ||
+                    lowerHtml.includes("sorry. unless you've got a time machine") ||
                     lowerHtml.includes("404")
                 ) {
                     return { exists: false, confidence: "low" };
                 }
+                if (
+                    lowerHtml.includes(lowerUsername) &&
+                    (lowerHtml.includes("followers") ||
+                        lowerHtml.includes("videos") ||
+                        lowerHtml.includes("streaming"))
+                ) {
+                    return { exists: true, confidence: "medium" };
+                }
+                return { exists: false, confidence: "low" };
+
+            case "Pinterest":
+                if (
+                    lowerHtml.includes("not found") ||
+                    lowerHtml.includes("404") ||
+                    !lowerHtml.includes(lowerUsername)
+                ) {
+                    return { exists: false, confidence: "low" };
+                }
+                if (
+                    lowerHtml.includes("followers") ||
+                    lowerHtml.includes("pins") ||
+                    lowerHtml.includes("boards")
+                ) {
+                    return { exists: true, confidence: "medium" };
+                }
+                return { exists: false, confidence: "low" };
+
+            case "Behance":
+                if (
+                    lowerHtml.includes("not found") ||
+                    lowerHtml.includes("404") ||
+                    !lowerHtml.includes(lowerUsername)
+                ) {
+                    return { exists: false, confidence: "low" };
+                }
+                if (
+                    lowerHtml.includes("projects") ||
+                    lowerHtml.includes("appreciations") ||
+                    lowerHtml.includes("followers")
+                ) {
+                    return { exists: true, confidence: "medium" };
+                }
+                return { exists: false, confidence: "low" };
+
+            case "Snapchat":
+                if (
+                    lowerHtml.includes("not found") ||
+                    lowerHtml.includes("404")
+                ) {
+                    return { exists: false, confidence: "low" };
+                }
+                if (lowerHtml.includes("snapchat") && lowerHtml.includes(lowerUsername)) {
+                    return { exists: true, confidence: "medium" };
+                }
+                return { exists: false, confidence: "low" };
+
+            case "Mastodon":
+                if (
+                    lowerHtml.includes("not found") ||
+                    lowerHtml.includes("404") ||
+                    !lowerHtml.includes(lowerUsername)
+                ) {
+                    return { exists: false, confidence: "low" };
+                }
+                if (
+                    lowerHtml.includes("toots") ||
+                    lowerHtml.includes("followers") ||
+                    lowerHtml.includes("following")
+                ) {
+                    return { exists: true, confidence: "medium" };
+                }
+                return { exists: false, confidence: "low" };
+
+            case "Discord":
+            case "Telegram":
+                // These require auth or app-level access, can't validate via HTML
                 return { exists: false, confidence: "low" };
 
             case "HackerNews":

@@ -1,19 +1,11 @@
 /**
  * Name-first person search — discover social profiles by full name.
- *
- * Key architecture:
- *   - Phase 1 discovers real usernames via Tavily + GitHub API
- *   - An IdentityMap tracks which username belongs to which platform
- *   - Phase 2 only searches platforms NOT yet in the IdentityMap
  */
 
 import { searchUsernameOnPlatforms, ALL_PLATFORM_NAMES } from "./username-search";
-import { searchWithTavily } from "./tavily-search";
+import { searchWithTavily, DEFAULT_SOCIAL_DOMAINS } from "./tavily-search";
 
-// ═══════════════════════════════════════════════════════
 // Types
-// ═══════════════════════════════════════════════════════
-
 export type ProfileResult = {
     platform: string;
     url: string;
@@ -41,20 +33,8 @@ export interface PersonSearchResult {
     identityMap: IdentityMap;
 }
 
-// ═══════════════════════════════════════════════════════
-// Username relevance checking
-// ═══════════════════════════════════════════════════════
-
 /**
- * Check whether a discovered username is plausibly related to the target name.
- *
- * Strategies:
- *   1. Substring match  — a name part (≥2 chars) appears in the username
- *   2. Concatenation     — full concatenated name matches
- *   3. Prefix match      — username starts with a name-part prefix (≥3 chars)
- *   4. Initials match    — username starts with the person's initials
- *   5. Reversed name     — "bernaskojeffery" style
- *   6. Partial overlap   — 2+ name parts found (any order)
+ * Check whether a discovered username is plausibly related to the target name.y order)
  */
 export function isUsernameRelevant(
     username: string,
@@ -104,11 +84,7 @@ export function isUsernameRelevant(
 
     return false;
 }
-
-// ═══════════════════════════════════════════════════════
 // URL utilities
-// ═══════════════════════════════════════════════════════
-
 /** Extract username from a social profile URL. */
 export function extractUsernameFromUrl(url: string): string | null {
     const patterns: { regex: RegExp; group: number }[] = [
@@ -124,6 +100,15 @@ export function extractUsernameFromUrl(url: string): string | null {
         { regex: /twitch\.tv\/([A-Za-z0-9_]+)\/?$/i, group: 1 },
         { regex: /dev\.to\/([A-Za-z0-9_]+)\/?$/i, group: 1 },
         { regex: /behance\.net\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
+        { regex: /pinterest\.com\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
+        { regex: /snapchat\.com\/add\/([A-Za-z0-9_.-]+)\/?$/i, group: 1 },
+        { regex: /dribbble\.com\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
+        { regex: /soundcloud\.com\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
+        { regex: /mastodon\.social\/@([A-Za-z0-9_]+)\/?$/i, group: 1 },
+        { regex: /threads\.net\/@([A-Za-z0-9_.]+)\/?$/i, group: 1 },
+        { regex: /quora\.com\/profile\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
+        { regex: /stackoverflow\.com\/users\/\d+\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
+        { regex: /t\.me\/([A-Za-z0-9_]+)\/?$/i, group: 1 },
     ];
 
     for (const { regex, group } of patterns) {
@@ -150,13 +135,17 @@ export function detectPlatformFromUrl(url: string): string {
     if (lower.includes("behance.net")) return "Behance";
     if (lower.includes("pinterest.com")) return "Pinterest";
     if (lower.includes("mastodon.social")) return "Mastodon";
+    if (lower.includes("snapchat.com")) return "Snapchat";
+    if (lower.includes("dribbble.com")) return "Dribbble";
+    if (lower.includes("soundcloud.com")) return "SoundCloud";
+    if (lower.includes("threads.net")) return "Threads";
+    if (lower.includes("quora.com")) return "Quora";
+    if (lower.includes("stackoverflow.com")) return "Stack Overflow";
+    if (lower.includes("t.me/")) return "Telegram";
     return "Other";
 }
 
-// ═══════════════════════════════════════════════════════
 // Main search function
-// ═══════════════════════════════════════════════════════
-
 export async function searchPersonByName(
     fullName: string,
 ): Promise<PersonSearchResult> {
@@ -168,22 +157,55 @@ export async function searchPersonByName(
     const discoveredProfiles: ProfileResult[] = [];
     const identityMap = new Map<string, PlatformIdentity>();
 
-    // ══════════════════════════════════════════════════
     // PHASE 1: Discover real identities (Tavily + APIs)
-    // ══════════════════════════════════════════════════
-
     console.log(`📡 Phase 1: Discovering real usernames for "${fullName}"...\n`);
 
-    // ── 1A: Tavily name search ──
+    // ── 1A: Tavily name search (multiple platform-targeted queries) ──
     const tavilyKey = process.env.TAVILY_API_KEY;
     if (tavilyKey) {
-        console.log(`  🔍 1A: Tavily name search...`);
-        const tavilyResults = await searchWithTavily(
-            `"${fullName}" social media profile (official OR verified) site:linkedin.com OR site:instagram.com OR site:x.com OR site:github.com OR site:facebook.com OR site:tiktok.com`,
-            tavilyKey,
+        console.log(`  🔍 1A: Tavily name search (multi-query strategy)...`);
+
+        // Split into focused query groups so LinkedIn doesn't drown out other results.
+        // Each group uses a neutral query (no "official OR verified" bias) and
+        // restricts to specific domains so every platform gets fair coverage.
+        const queryGroups: { label: string; query: string; domains: string[] }[] = [
+            {
+                label: "Professional & Dev",
+                query: `"${fullName}" profile`,
+                domains: ["linkedin.com", "github.com", "stackoverflow.com", "dev.to"],
+            },
+            {
+                label: "Major social",
+                query: `"${fullName}" profile account`,
+                domains: ["instagram.com", "x.com", "twitter.com", "facebook.com", "threads.net"],
+            },
+            {
+                label: "Video & creative",
+                query: `"${fullName}" channel profile`,
+                domains: ["youtube.com", "tiktok.com", "twitch.tv", "behance.net", "dribbble.com", "soundcloud.com"],
+            },
+            {
+                label: "Forums & other",
+                query: `"${fullName}" profile`,
+                domains: ["reddit.com", "medium.com", "quora.com", "pinterest.com", "mastodon.social", "t.me", "snapchat.com"],
+            },
+        ];
+
+        // Run all query groups in parallel for speed
+        const groupResults = await Promise.all(
+            queryGroups.map(async (group) => {
+                console.log(`    🔍 Searching: ${group.label}...`);
+                return searchWithTavily(group.query, tavilyKey, {
+                    includeDomains: group.domains,
+                    maxResults: 8,
+                });
+            }),
         );
 
-        for (const result of tavilyResults) {
+        const allTavilyResults = groupResults.flat();
+        console.log(`    📡 Total Tavily results across all groups: ${allTavilyResults.length}`);
+
+        for (const result of allTavilyResults) {
             const platform = detectPlatformFromUrl(result.url);
             const username = extractUsernameFromUrl(result.url);
             const urlLower = result.url.toLowerCase();
@@ -220,6 +242,12 @@ export async function searchPersonByName(
                     );
                     continue;
                 }
+
+                // Skip duplicates from overlapping query groups
+                const isDupe = discoveredProfiles.some(
+                    (p) => p.platform === platform && p.url === result.url,
+                );
+                if (isDupe) continue;
 
                 console.log(
                     `    ✅ Tavily found ${platform}: ${result.url}${username ? ` (username: ${username})` : ""}`,
@@ -290,10 +318,7 @@ export async function searchPersonByName(
         );
     }
 
-    // ══════════════════════════════════════════════════
     // PHASE 2: Fill platform gaps
-    // ══════════════════════════════════════════════════
-
     const confirmedPlatforms = new Set(identityMap.keys());
 
     // Collect unique candidate usernames from the identity map
@@ -371,10 +396,7 @@ export async function searchPersonByName(
         }
     }
 
-    // ══════════════════════════════════════════════════
     // MERGE & DEDUPLICATE
-    // ══════════════════════════════════════════════════
-
     const platformMap = new Map<string, ProfileResult>();
     for (const profile of discoveredProfiles) {
         if (!profile.found) continue;

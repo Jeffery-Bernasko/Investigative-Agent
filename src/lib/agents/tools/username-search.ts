@@ -183,10 +183,10 @@ export async function searchUsername(rawUsername: string): Promise<{
                 platform = "GitHub";
                 profileUrl = `https://github.com/${username}`;
             } else if (
-                (url.includes("x.com/") || url.includes("x.com/")) &&
+                (url.includes("x.com/") || url.includes("twitter.com/")) &&
                 url.includes(username)
             ) {
-                platform = "Twitter";
+                platform = "X";
                 profileUrl = `https://x.com/${username}`;
             } else if (url.includes("linkedin.com/in/")) {
                 platform = "LinkedIn";
@@ -218,6 +218,78 @@ export async function searchUsername(rawUsername: string): Promise<{
             ) {
                 platform = "YouTube";
                 profileUrl = `https://youtube.com/@${username}`;
+            } else if (
+                url.includes("tiktok.com/@") &&
+                url.includes(username)
+            ) {
+                platform = "TikTok";
+                profileUrl = `https://tiktok.com/@${username}`;
+            } else if (
+                url.includes("twitch.tv/") &&
+                url.includes(username)
+            ) {
+                platform = "Twitch";
+                profileUrl = `https://twitch.tv/${username}`;
+            } else if (
+                url.includes("pinterest.com/") &&
+                url.includes(username)
+            ) {
+                platform = "Pinterest";
+                profileUrl = `https://pinterest.com/${username}`;
+            } else if (
+                url.includes("behance.net/") &&
+                url.includes(username)
+            ) {
+                platform = "Behance";
+                profileUrl = `https://behance.net/${username}`;
+            } else if (
+                url.includes("dribbble.com/") &&
+                url.includes(username)
+            ) {
+                platform = "Dribbble";
+                profileUrl = `https://dribbble.com/${username}`;
+            } else if (
+                url.includes("soundcloud.com/") &&
+                url.includes(username)
+            ) {
+                platform = "SoundCloud";
+                profileUrl = `https://soundcloud.com/${username}`;
+            } else if (
+                url.includes("dev.to/") &&
+                url.includes(username)
+            ) {
+                platform = "Dev.to";
+                profileUrl = `https://dev.to/${username}`;
+            } else if (
+                url.includes("mastodon.social/@") &&
+                url.includes(username)
+            ) {
+                platform = "Mastodon";
+                profileUrl = `https://mastodon.social/@${username}`;
+            } else if (
+                url.includes("threads.net/@") &&
+                url.includes(username)
+            ) {
+                platform = "Threads";
+                profileUrl = `https://threads.net/@${username}`;
+            } else if (
+                url.includes("snapchat.com/add/") &&
+                url.includes(username)
+            ) {
+                platform = "Snapchat";
+                profileUrl = `https://snapchat.com/add/${username}`;
+            } else if (
+                url.includes("quora.com/profile/") &&
+                url.includes(username)
+            ) {
+                platform = "Quora";
+                profileUrl = result.url;
+            } else if (
+                url.includes("t.me/") &&
+                url.includes(username)
+            ) {
+                platform = "Telegram";
+                profileUrl = `https://t.me/${username}`;
             }
 
             const existing = foundProfiles.find((p) => p.platform === platform);

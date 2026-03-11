@@ -354,29 +354,88 @@ IMPORTANT: Write ONLY plain text paragraphs. Do NOT wrap your response in JSON, 
     summary = summary.trim();
     // Remove markdown code fences if present
     summary = summary.replace(/^```[\s\S]*?```$/gm, "").trim();
-    // If the response looks like JSON, try to extract the text value
-    if (summary.startsWith("{")) {
+
+    // If the response looks like JSON, try to extract usable text
+    if (summary.startsWith("{") || summary.startsWith("[")) {
         try {
             const parsed = JSON.parse(summary);
-            // Dig into any nested structure to find the text
-            const extractText = (obj: any): string => {
-                if (typeof obj === "string") return obj;
-                if (typeof obj === "object" && obj !== null) {
+
+            // Collect all string values from any level of nesting
+            const collectStrings = (obj: any): string[] => {
+                const strings: string[] = [];
+                if (typeof obj === "string" && obj.trim().length > 10) {
+                    strings.push(obj.trim());
+                } else if (typeof obj === "object" && obj !== null) {
                     for (const val of Object.values(obj)) {
-                        const result = extractText(val);
-                        if (result && result.length > 50) return result;
+                        strings.push(...collectStrings(val));
                     }
                 }
-                return "";
+                return strings;
             };
-            const extracted = extractText(parsed);
-            if (extracted) summary = extracted;
+
+            const extracted = collectStrings(parsed);
+            if (extracted.length > 0) {
+                // Use the longest string, or join them all if multiple paragraphs
+                const longest = extracted.reduce((a, b) => a.length >= b.length ? a : b, "");
+                summary = longest.length > 100 ? longest : extracted.join("\n\n");
+            } else {
+                // LLM returned JSON with no usable text (e.g. {"Executive Summary": -1})
+                // Build a data-driven fallback
+                summary = buildFallbackSummary(findings, intent, riskScore);
+            }
         } catch {
             // Not valid JSON, use as-is
         }
     }
+
     // Remove leading/trailing quotes
     summary = summary.replace(/^["']|["']$/g, "").trim();
 
+    // Final safety net: if summary is too short or looks like garbage, use fallback
+    if (summary.length < 30 || /^\s*\{/.test(summary)) {
+        summary = buildFallbackSummary(findings, intent, riskScore);
+    }
+
     return summary;
 }
+
+/**
+ * Build a data-driven executive summary when the LLM fails to produce one.
+ * Uses actual findings data to construct readable prose.
+ */
+function buildFallbackSummary(
+    findings: OsintFindings,
+    intent: Intent,
+    riskScore: number
+): string {
+    const foundProfiles = findings.profiles.filter((p) => p.found);
+    const highConf = foundProfiles.filter((p) => p.confidence === "high");
+    const platforms = [...new Set(foundProfiles.map((p) => p.platform))];
+    const riskLabel = riskScore >= 7 ? "HIGH" : riskScore >= 4 ? "MODERATE" : "LOW";
+
+    const parts: string[] = [];
+
+    parts.push(
+        `An OSINT investigation was conducted on ${intent.targetType} "${intent.target}". ` +
+        `The investigation identified ${foundProfiles.length} social media profile${foundProfiles.length !== 1 ? "s" : ""} ` +
+        `across ${platforms.length} platform${platforms.length !== 1 ? "s" : ""}` +
+        (platforms.length > 0 ? `, including ${platforms.slice(0, 5).join(", ")}` : "") + "."
+    );
+
+    if (highConf.length > 0) {
+        parts.push(
+            `${highConf.length} profile${highConf.length !== 1 ? "s were" : " was"} confirmed with high confidence. ` +
+            `The subject maintains a digital presence that spans ${platforms.length > 5 ? "numerous" : platforms.length > 2 ? "several" : "a limited number of"} online platforms.`
+        );
+    }
+
+    parts.push(
+        `The overall risk score is ${riskScore}/10 (${riskLabel}). ` +
+        (findings.emails.length > 0 ? `${findings.emails.length} associated email address${findings.emails.length !== 1 ? "es were" : " was"} discovered. ` : "") +
+        (findings.domains.length > 0 ? `${findings.domains.length} linked domain${findings.domains.length !== 1 ? "s were" : " was"} identified. ` : "") +
+        `Further analysis may be warranted based on the scope of the subject's digital exposure.`
+    );
+
+    return parts.join("\n\n");
+}
+

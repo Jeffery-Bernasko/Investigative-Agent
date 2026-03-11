@@ -172,15 +172,17 @@ interface Output {
   error?: string;
 }
 
+let targetUrl: string;
+
 async function main() {
   // Initialize the Apify SDK
   await Actor.init();
 
   // Get input
-  const input = await Actor.getInput<Input>() || {};
+  const input = (await Actor.getInput<Input>()) as Input || {};
 
   const {
-    targetUrl,
+    targetUrl: url,
     targetUsername,
     platform: platformInput,
     searchType = 'username',
@@ -190,9 +192,12 @@ async function main() {
     proxy = false,
   } = input;
 
+  targetUrl = url;
+
   // Validate input
   if (!targetUrl) {
-    await Actor.failOutput({ error: 'targetUrl is required' });
+    await Actor.pushData({ error: 'targetUrl is required' });
+    await Actor.fail();
     return;
   }
 
@@ -220,7 +225,7 @@ async function main() {
   // Create the crawler
   const crawler = new PlaywrightCrawler({
     proxyConfiguration,
-    requestHandler: async ({ page, request }) => {
+    requestHandler: async ({ page, request }: { page: any; request: any }) => {
       log.info(`[SEPTO Scraper] Processing: ${request.url}`);
 
       // Set up stealth mode
@@ -235,7 +240,7 @@ async function main() {
 
       // Block resources if enabled
       if (blockResources) {
-        await page.route('**/*', (route) => {
+        await page.route('**/*', (route: { request: () => { (): any; new(): any; resourceType: { (): any; new(): any; }; }; abort: () => void; continue: () => void; }) => {
           const resourceType = route.request().resourceType();
           if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
             route.abort();
@@ -333,7 +338,7 @@ async function main() {
   log.info(`[SEPTO Scraper] Scraping completed successfully`);
 
   // Save output
-  await Actor.setOutput(result);
+  await Actor.pushData(result);
 
   // Exit successfully
   await Actor.exit();
@@ -343,7 +348,7 @@ async function main() {
 main().catch(async (error) => {
   log.error(`[SEPTO Scraper] Fatal error: ${error.message}`);
 
-  await Actor.setOutput({
+  await Actor.pushData({
     error: error.message,
     metadata: {
       targetUrl,

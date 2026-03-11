@@ -1,0 +1,69 @@
+{
+  "title": "SEPTO OSINT Scraper Input",
+  "description": "Input configuration for scraping social media profiles",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "targetUrl": {
+      "title": "Target URL",
+      "type": "string",
+      "description": "The URL to scrape (e.g., https://github.com/username)",
+      "editor": "textfield"
+    },
+    "targetUsername": {
+      "title": "Target Username",
+      "type": "string",
+      "description": "Username to scrape (extracted from URL if not provided)",
+      "editor": "textfield"
+    },
+    "platform": {
+      "title": "Platform",
+      "type": "string",
+      "description": "Social media platform (github, twitter, instagram, linkedin, generic)",
+      "enum": ["github", "twitter", "instagram", "linkedin", "facebook", "tiktok", "generic"],
+      "enumTitles": ["GitHub", "Twitter/X", "Instagram", "LinkedIn", "Facebook", "TikTok", "Generic"],
+      "default": "generic",
+      "editor": "select"
+    },
+    "searchType": {
+      "title": "Search Type",
+      "type": "string",
+      "description": "Type of OSINT search",
+      "enum": ["username", "email", "phone", "domain", "ip"],
+      "enumTitles": ["Username", "Email", "Phone", "Domain", "IP Address"],
+      "default": "username",
+      "editor": "select"
+    },
+    "headless": {
+      "title": "Headless Mode",
+      "type": "boolean",
+      "description": "Run browser in headless mode",
+      "default": true,
+      "editor": "checkbox"
+    },
+    "blockResources": {
+      "title": "Block Resources",
+      "type": "boolean",
+      "description": "Block images, CSS, and fonts to save bandwidth",
+      "default": true,
+      "editor": "checkbox"
+    },
+    "timeout": {
+      "title": "Timeout (seconds)",
+      "type": "integer",
+      "description": "Maximum time to wait for page load",
+      "minimum": 10,
+      "maximum": 300,
+      "default": 60,
+      "editor": "number"
+    },
+    "proxy": {
+      "title": "Use Apify Proxy",
+      "type": "boolean",
+      "description": "Use Apify's residential proxies to avoid blocking",
+      "default": false,
+      "editor": "checkbox"
+    }
+  },
+  "required": ["targetUrl"]
+}

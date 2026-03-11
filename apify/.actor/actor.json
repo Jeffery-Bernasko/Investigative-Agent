@@ -1,0 +1,16 @@
+{
+  "actorSpecification": 1,
+  "name": "septo-osint-scraper",
+  "title": "SEPTO OSINT Scraper",
+  "description": "Scrapes social media profiles for OSINT data",
+  "version": "1.0.0",
+  "meta": {
+    "templateId": "js-crawlee-playwright",
+    "generatedBy": "Claude Code"
+  },
+  "input": "./input_schema.json",
+  "output": "./output_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  }
+}

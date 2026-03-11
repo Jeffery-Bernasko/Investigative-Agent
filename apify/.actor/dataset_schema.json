@@ -1,0 +1,59 @@
+{
+  "actorSpecification": 1,
+  "fields": {
+    "url": {
+      "type": "string",
+      "title": "URL"
+    },
+    "platform": {
+      "type": "string",
+      "title": "Platform"
+    },
+    "scrapedAt": {
+      "type": "string",
+      "title": "Scraped At"
+    },
+    "profile": {
+      "type": "object",
+      "title": "Profile"
+    },
+    "stats": {
+      "type": "object",
+      "title": "Statistics"
+    }
+  },
+  "views": {
+    "overview": {
+      "title": "Scraped Profiles",
+      "transformation": {
+        "fields": ["url", "platform", "profile.displayName", "profile.username", "stats.followers", "stats.following"]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "url": {
+            "label": "URL",
+            "format": "link"
+          },
+          "platform": {
+            "label": "Platform"
+          },
+          "profile.displayName": {
+            "label": "Display Name"
+          },
+          "profile.username": {
+            "label": "Username"
+          },
+          "stats.followers": {
+            "label": "Followers",
+            "format": "number"
+          },
+          "stats.following": {
+            "label": "Following",
+            "format": "number"
+          }
+        }
+      }
+    }
+  }
+}

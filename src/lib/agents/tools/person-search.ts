@@ -34,7 +34,11 @@ export interface PersonSearchResult {
 }
 
 /**
- * Check whether a discovered username is plausibly related to the target name.y order)
+ * Check whether a discovered username is plausibly related to the target name.
+ *
+ * For multi-part names (e.g. "Cedric Amoah"), a single first-name match is NOT
+ * enough — we require evidence of BOTH parts to avoid false positives like
+ * "Cedric Dzelu" matching when searching for "Cedric Amoah".
  */
 export function isUsernameRelevant(
     username: string,
@@ -49,73 +53,110 @@ export function isUsernameRelevant(
 
     const cleaned = username.toLowerCase().replace(/[-_.]/g, "");
 
-    // 1. Substring match (original logic)
-    const hasNamePart = nameParts.some((part) => cleaned.includes(part));
-
-    // 2. Concatenation match (original logic)
+    // 1. Concatenation match — "cedricamoah" or "amoahcedric"
     const concatenated = nameParts.join("");
-    const isVariation =
-        cleaned.includes(concatenated) || concatenated.includes(cleaned);
+    if (cleaned.includes(concatenated) || concatenated.includes(cleaned)) return true;
 
-    if (hasNamePart || isVariation) return true;
-
-    // 3. Prefix match — username starts with the first 3+ chars of any name part
-    const hasPrefixMatch = nameParts.some((part) => {
-        const prefix = part.slice(0, Math.max(3, Math.ceil(part.length * 0.6)));
-        return cleaned.startsWith(prefix);
-    });
-    if (hasPrefixMatch) return true;
-
-    // 4. Initials match — username starts with initials (e.g. "jb" for "Jeffery Bernasko")
-    if (nameParts.length >= 2) {
-        const initials = nameParts.map((p) => p[0]).join("");
-        if (initials.length >= 2 && cleaned.startsWith(initials)) return true;
-    }
-
-    // 5. Reversed name concatenation — "bernaskojeffery"
     const reversed = [...nameParts].reverse().join("");
     if (cleaned.includes(reversed) || reversed.includes(cleaned)) return true;
 
-    // 6. Partial overlap — at least 2 name parts appear (any order, any position)
-    if (nameParts.length >= 2) {
-        const matchCount = nameParts.filter((part) => cleaned.includes(part)).length;
-        if (matchCount >= 2) return true;
+    // 2. For single-part names, any substring match is fine
+    if (nameParts.length === 1) {
+        return cleaned.includes(nameParts[0]);
     }
+
+    // 3. For multi-part names, require ALL parts to appear in the username
+    const allPartsMatch = nameParts.every((part) => cleaned.includes(part));
+    if (allPartsMatch) return true;
+
+    // 4. Initials directly adjacent to last name — e.g. "camoah", "jbamoah"
+    const initials = nameParts.map((p) => p[0]).join("");
+    const lastName = nameParts[nameParts.length - 1];
+    const firstName = nameParts[0];
+    // "camoah" or "jbamoah" — initials immediately followed by last name
+    if (cleaned.includes(initials + lastName)) return true;
+    // "amoahca" or "amoahjb" — last name immediately followed by initials
+    if (cleaned.includes(lastName + initials)) return true;
+    // Single first initial: "camoah" — first initial directly before last name
+    if (cleaned.includes(firstName[0] + lastName)) return true;
+    // "amoahc" — last name directly followed by first initial
+    if (cleaned.includes(lastName + firstName[0])) return true;
 
     return false;
 }
 // URL utilities
 /** Extract username from a social profile URL. */
 export function extractUsernameFromUrl(url: string): string | null {
+    // Strip query params and hash before matching so URLs like
+    // linkedin.com/in/user?trk=... still extract correctly.
+    const cleanUrl = url.split(/[?#]/)[0].replace(/\/+$/, "");
+
     const patterns: { regex: RegExp; group: number }[] = [
-        { regex: /github\.com\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
-        { regex: /(?:twitter|x)\.com\/([A-Za-z0-9_]+)\/?$/i, group: 1 },
-        { regex: /instagram\.com\/([A-Za-z0-9_.]+)\/?$/i, group: 1 },
-        { regex: /linkedin\.com\/in\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
-        { regex: /facebook\.com\/([A-Za-z0-9_.]+)\/?$/i, group: 1 },
-        { regex: /reddit\.com\/user\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
-        { regex: /medium\.com\/@?([A-Za-z0-9_.-]+)\/?$/i, group: 1 },
-        { regex: /youtube\.com\/@([A-Za-z0-9_.-]+)\/?$/i, group: 1 },
-        { regex: /tiktok\.com\/@([A-Za-z0-9_.]+)\/?$/i, group: 1 },
-        { regex: /twitch\.tv\/([A-Za-z0-9_]+)\/?$/i, group: 1 },
-        { regex: /dev\.to\/([A-Za-z0-9_]+)\/?$/i, group: 1 },
-        { regex: /behance\.net\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
-        { regex: /pinterest\.com\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
-        { regex: /snapchat\.com\/add\/([A-Za-z0-9_.-]+)\/?$/i, group: 1 },
-        { regex: /dribbble\.com\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
-        { regex: /soundcloud\.com\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
-        { regex: /mastodon\.social\/@([A-Za-z0-9_]+)\/?$/i, group: 1 },
-        { regex: /threads\.net\/@([A-Za-z0-9_.]+)\/?$/i, group: 1 },
-        { regex: /quora\.com\/profile\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
-        { regex: /stackoverflow\.com\/users\/\d+\/([A-Za-z0-9_-]+)\/?$/i, group: 1 },
-        { regex: /t\.me\/([A-Za-z0-9_]+)\/?$/i, group: 1 },
+        { regex: /github\.com\/([A-Za-z0-9_-]+)$/i, group: 1 },
+        { regex: /(?:twitter|x)\.com\/([A-Za-z0-9_]+)$/i, group: 1 },
+        { regex: /instagram\.com\/([A-Za-z0-9_.]+)$/i, group: 1 },
+        { regex: /linkedin\.com\/in\/([A-Za-z0-9_-]+)$/i, group: 1 },
+        { regex: /facebook\.com\/([A-Za-z0-9_.]+)$/i, group: 1 },
+        { regex: /reddit\.com\/user\/([A-Za-z0-9_-]+)$/i, group: 1 },
+        { regex: /medium\.com\/@?([A-Za-z0-9_.-]+)$/i, group: 1 },
+        { regex: /youtube\.com\/@([A-Za-z0-9_.-]+)$/i, group: 1 },
+        { regex: /tiktok\.com\/@([A-Za-z0-9_.]+)$/i, group: 1 },
+        { regex: /twitch\.tv\/([A-Za-z0-9_]+)$/i, group: 1 },
+        { regex: /dev\.to\/([A-Za-z0-9_]+)$/i, group: 1 },
+        { regex: /behance\.net\/([A-Za-z0-9_-]+)$/i, group: 1 },
+        { regex: /pinterest\.com\/([A-Za-z0-9_-]+)$/i, group: 1 },
+        { regex: /snapchat\.com\/add\/([A-Za-z0-9_.-]+)$/i, group: 1 },
+        { regex: /dribbble\.com\/([A-Za-z0-9_-]+)$/i, group: 1 },
+        { regex: /soundcloud\.com\/([A-Za-z0-9_-]+)$/i, group: 1 },
+        { regex: /mastodon\.social\/@([A-Za-z0-9_]+)$/i, group: 1 },
+        { regex: /threads\.net\/@([A-Za-z0-9_.]+)$/i, group: 1 },
+        { regex: /quora\.com\/profile\/([A-Za-z0-9_-]+)$/i, group: 1 },
+        { regex: /stackoverflow\.com\/users\/\d+\/([A-Za-z0-9_-]+)$/i, group: 1 },
+        { regex: /t\.me\/([A-Za-z0-9_]+)$/i, group: 1 },
     ];
 
     for (const { regex, group } of patterns) {
-        const match = url.match(regex);
+        const match = cleanUrl.match(regex);
         if (match) return match[group];
     }
     return null;
+}
+
+/** Check if a URL points to an actual profile page (not a post, reel, video, etc.) */
+function isProfileUrl(url: string, platform: string): boolean {
+    const lower = url.toLowerCase();
+
+    if (platform === "Instagram") {
+        // Only accept instagram.com/<username>/ — reject reels, posts, stories, etc.
+        if (/\/(reel|reels|p|stories|tv|explore|s)\//i.test(lower)) return false;
+    }
+    if (platform === "TikTok") {
+        // Only accept tiktok.com/@username — reject /video/, /photo/, etc.
+        if (/\/@[^/]+\/(video|photo|live)/i.test(lower)) return false;
+        // Reject URLs without @ (trending, discover pages)
+        if (lower.includes("tiktok.com/") && !lower.includes("/@")) return false;
+    }
+    if (platform === "YouTube") {
+        // Only accept youtube.com/@username or /channel/ — reject /watch, /shorts, /playlist
+        if (/\/(watch|shorts|playlist|embed)\b/i.test(lower)) return false;
+    }
+    if (platform === "Facebook") {
+        if (/\/(groups|posts|photos|videos|pub\/dir|watch|events|marketplace)\//i.test(lower)) return false;
+    }
+    if (platform === "LinkedIn") {
+        if (/\/(pub\/dir|company|posts|pulse|feed|jobs)\//i.test(lower)) return false;
+        if (!lower.includes("/in/")) return false;
+    }
+    if (platform === "Reddit") {
+        // Only accept reddit.com/user/<name> — reject /r/ posts
+        if (/\/r\//i.test(lower) && !/\/user\//i.test(lower)) return false;
+        if (/\/comments\//i.test(lower)) return false;
+    }
+    if (platform === "X") {
+        if (/\/status\//i.test(lower)) return false;
+    }
+
+    return true;
 }
 
 /** Detect platform from URL. */
@@ -205,48 +246,51 @@ export async function searchPersonByName(
         const allTavilyResults = groupResults.flat();
         console.log(`    📡 Total Tavily results across all groups: ${allTavilyResults.length}`);
 
+        // Build name parts for content-level relevance checks
+        const searchNameParts = fullName.toLowerCase().split(/\s+/).filter((p) => p.length >= 2);
+        const searchLastName = searchNameParts.length >= 2 ? searchNameParts[searchNameParts.length - 1] : null;
+        const fullNameLower = fullName.toLowerCase();
+
         for (const result of allTavilyResults) {
             const platform = detectPlatformFromUrl(result.url);
             const username = extractUsernameFromUrl(result.url);
-            const urlLower = result.url.toLowerCase();
 
-            // Filter out non-profile URLs
-            if (platform === "Facebook") {
-                if (
-                    urlLower.includes("/groups/") ||
-                    urlLower.includes("/posts/") ||
-                    urlLower.includes("/photos/") ||
-                    urlLower.includes("/videos/") ||
-                    urlLower.includes("/pub/dir/")
-                ) {
-                    console.log(`    ⏭️ Skipping non-profile Facebook URL: ${result.url}`);
-                    continue;
-                }
-            }
-            if (platform === "LinkedIn") {
-                if (
-                    urlLower.includes("/pub/dir/") ||
-                    urlLower.includes("/company/") ||
-                    urlLower.includes("/posts/") ||
-                    !urlLower.includes("/in/")
-                ) {
-                    console.log(`    ⏭️ Skipping non-profile LinkedIn URL: ${result.url}`);
-                    continue;
-                }
+            // Filter out non-profile URLs (reels, posts, videos, etc.)
+            if (platform !== "Other" && !isProfileUrl(result.url, platform)) {
+                console.log(`    ⏭️ Skipping non-profile ${platform} URL: ${result.url}`);
+                continue;
             }
 
+            // Relevance gate: require strong evidence this result belongs to the target.
             if (platform !== "Other") {
-                if (username && !isUsernameRelevant(username, fullName)) {
+                const titleLower = result.title.toLowerCase();
+
+                // Check 1: Does the title contain ALL name parts? (strongest signal)
+                const titleHasAllParts = searchNameParts.every((part) => titleLower.includes(part));
+
+                // Check 2: Does the URL username match the target name?
+                const usernameMatches = username && isUsernameRelevant(username, fullName);
+
+                if (!titleHasAllParts && !usernameMatches) {
                     console.log(
-                        `    ⏭️ Skipping unrelated username: "${username}" (not related to "${fullName}")`,
+                        `    ⏭️ Skipping — title doesn't contain full name: "${result.title}" (${result.url})`,
                     );
                     continue;
                 }
 
-                // Skip duplicates from overlapping query groups
-                const isDupe = discoveredProfiles.some(
-                    (p) => p.platform === platform && p.url === result.url,
-                );
+                // Skip duplicates from overlapping query groups (compare by platform, ignoring URL variants)
+                const isDupe = discoveredProfiles.some((p) => {
+                    if (p.platform !== platform) return false;
+                    // Same URL (ignoring query params/trailing slashes)
+                    const normalizeUrl = (u: string) => u.split(/[?#]/)[0].replace(/\/+$/, "").toLowerCase();
+                    if (normalizeUrl(p.url) === normalizeUrl(result.url)) return true;
+                    // Same username on the same platform
+                    if (username) {
+                        const existingUsername = extractUsernameFromUrl(p.url);
+                        if (existingUsername?.toLowerCase() === username.toLowerCase()) return true;
+                    }
+                    return false;
+                });
                 if (isDupe) continue;
 
                 console.log(
@@ -289,8 +333,16 @@ export async function searchPersonByName(
         if (ghResponse.ok) {
             const ghData = await ghResponse.json();
             const users = ghData.items || [];
+            let accepted = 0;
             for (const user of users) {
-                console.log(`✅ GitHub user: ${user.login} (${user.html_url})`);
+                // Filter: username must be relevant to the target name
+                if (!isUsernameRelevant(user.login, fullName)) {
+                    console.log(`    ⏭️ Skipping unrelated GitHub user: "${user.login}"`);
+                    continue;
+                }
+
+                console.log(`    ✅ GitHub user: ${user.login} (${user.html_url})`);
+                accepted++;
 
                 if (!identityMap.has("GitHub")) {
                     identityMap.set("GitHub", {
@@ -308,7 +360,7 @@ export async function searchPersonByName(
                     checkedAt: new Date(),
                 });
             }
-            console.log(`📊 GitHub found ${users.length} users\n`);
+            console.log(`    📊 GitHub: ${accepted} relevant out of ${users.length} results\n`);
         } else {
             console.log(`⚠️ GitHub API returned ${ghResponse.status}\n`);
         }
@@ -396,11 +448,16 @@ export async function searchPersonByName(
         }
     }
 
-    // MERGE & DEDUPLICATE
+    // MERGE & DEDUPLICATE (by platform + normalized URL or username)
     const platformMap = new Map<string, ProfileResult>();
     for (const profile of discoveredProfiles) {
         if (!profile.found) continue;
-        const key = profile.platform + ":" + profile.url;
+        const normalizedUrl = profile.url.split(/[?#]/)[0].replace(/\/+$/, "").toLowerCase();
+        const profileUsername = extractUsernameFromUrl(profile.url);
+        // Prefer username-based key (catches URL variants), fall back to normalized URL
+        const key = profileUsername
+            ? profile.platform + ":" + profileUsername.toLowerCase()
+            : profile.platform + ":" + normalizedUrl;
         const existing = platformMap.get(key);
         if (
             !existing ||

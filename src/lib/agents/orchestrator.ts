@@ -1,134 +1,81 @@
 import { createOllamaClient, OllamaClient } from "@/lib/ai/ollama-adapter";
 import { db } from "@/lib/db";
-import { investigationTraces } from "@/lib/db/schema";
 import {
   ExecutionContext,
   Intent,
   InvestigationResult,
-  InvestigationTrace,
   OsintFindings,
-  PlanStep,
-  StepResult,
-  ToolDependencies,
-  TraceStep,
-  ReplanEvent,
 } from "./types";
 import {
   createEntity,
   getEntityByName,
+  storeOsintFindings,
 } from "./tools/osint-tools";
 import { OsintAgent } from "./osint-agent";
 import { RelationshipAgent } from "./relationship-agent";
 import { AnalysisAgent } from "./analysis-agent";
 import { getSafeErrorInfo } from "./utils/errors";
-import { parseIntent, createPlan, evaluateStepResults, replanFromContext } from "./utils/llm-helpers";
-import { createDefaultRegistry, ToolRegistry } from "./tool-registry";
+import {
+  mapAgentResultToFindings,
+  computeFindingsStats,
+} from "./utils/result-mapper";
+import { analyzeResults, generateRecommendations } from "./utils/analysis";
+import { scrapeProfileContent } from "./tools/content-scraper";
+import { analyzeContent, ContentAnalysis } from "./tools/analysis-tools";
 
-// Trace Collector — captures step-level telemetry
-class TraceCollector {
-  private steps: TraceStep[] = [];
-  private errors: string[] = [];
-  private replanEvents: ReplanEvent[] = [];
-  private currentStep: { stepNumber: number; name: string; startMs: number } | null = null;
-  private runStartMs: number;
+// ── Intent parsing — deterministic, no LLM needed ──────────────────────
 
-  constructor(
-    private traceId: string,
-    private userId: string,
-    private target: string,
-    private planVersion: number = 1
-  ) {
-    this.runStartMs = Date.now();
+function parseIntent(userInput: string): Intent {
+  const input = userInput.trim();
+  const lower = input.toLowerCase();
+
+  // Detect scope from keywords
+  const scope: Intent["scope"] = lower.includes("deep") || lower.includes("thorough")
+    ? "deep"
+    : lower.includes("quick") || lower.includes("fast")
+      ? "quick"
+      : "standard";
+
+  // Detect intent from keywords
+  const intent: Intent["intent"] = lower.startsWith("monitor")
+    ? "monitor"
+    : lower.startsWith("analyze")
+      ? "analyze"
+      : lower.startsWith("search") || lower.includes("search for")
+        ? "search"
+        : "investigate";
+
+  // Strip action words to get target
+  const target = input
+    .replace(/^(investigate|search|analyze|monitor|deep scan|scan|search for \w+)\s+/i, "")
+    .replace(/^@/, "")
+    .trim();
+
+  // Detect target type
+  let targetType: Intent["targetType"];
+  if (target.includes("@") && target.split("@")[1]?.includes(".")) {
+    targetType = "email";
+  } else if (/^[\d.]+$/.test(target) || target.includes(":")) {
+    targetType = "ip";
+  } else if (target.includes(".") && !target.includes(" ")) {
+    targetType = "domain";
+  } else if (/^\+?\d{6,15}$/.test(target.replace(/\D/g, ""))) {
+    targetType = "phone";
+  } else if (target.includes(" ")) {
+    targetType = "person";
+  } else {
+    targetType = "username";
   }
 
-  startStep(stepNumber: number, name: string): void {
-    this.currentStep = { stepNumber, name, startMs: Date.now() };
-  }
-
-  endStep(
-    status: TraceStep["status"],
-    opts?: {
-      agentName?: string;
-      confidenceBefore?: number;
-      confidenceAfter?: number;
-      toolCalls?: string[];
-      resultSummary?: string;
-      error?: string;
-    }
-  ): void {
-    if (!this.currentStep) return;
-    const latencyMs = Date.now() - this.currentStep.startMs;
-
-    const step: TraceStep = {
-      stepNumber: this.currentStep.stepNumber,
-      name: this.currentStep.name,
-      status,
-      latencyMs,
-      ...opts,
-    };
-
-    this.steps.push(step);
-
-    if (opts?.error) {
-      this.errors.push(`Step ${this.currentStep.stepNumber} (${this.currentStep.name}): ${opts.error}`);
-    }
-
-    this.currentStep = null;
-  }
-
-  addError(msg: string): void {
-    this.errors.push(msg);
-  }
-
-  addReplanEvent(event: ReplanEvent): void {
-    this.replanEvents.push(event);
-  }
-
-  finalize(status: InvestigationTrace["status"]): InvestigationTrace {
-    if (this.currentStep) {
-      this.endStep("failed", { error: "Step did not complete (unhandled error)" });
-    }
-
-    return {
-      traceId: this.traceId,
-      userId: this.userId,
-      target: this.target,
-      planVersion: this.planVersion,
-      steps: this.steps,
-      totalLatencyMs: Date.now() - this.runStartMs,
-      status,
-      errors: this.errors,
-      replanEvents: this.replanEvents,
-      startedAt: new Date(this.runStartMs),
-      completedAt: new Date(),
-    };
-  }
+  return { target, targetType, intent, scope };
 }
 
-// Step Executor — per-step timeout wrapper
-const DEFAULT_STEP_TIMEOUT_MS = 120_000; // 2 minutes
-async function executeWithTimeout<T>(
-  fn: () => Promise<T>,
-  timeoutMs: number,
-  stepName: string
-): Promise<T> {
-  return Promise.race([
-    fn(),
-    new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`Step "${stepName}" timed out after ${timeoutMs}ms`)),
-        timeoutMs
-      )
-    ),
-  ]);
-}
-
-// Orchestrator Agent
+//  Orchestrator Agent 
 export class OrchestratorAgent {
   private llm: OllamaClient;
-  private db: any;
-  private registry: ToolRegistry;
-  private deps: ToolDependencies;
+  private osintAgent: OsintAgent;
+  private relationshipAgent: RelationshipAgent;
+  private analysisAgent: AnalysisAgent;
 
   constructor() {
     this.llm = createOllamaClient({
@@ -136,35 +83,23 @@ export class OrchestratorAgent {
       model: process.env.OLLAMA_MODEL || "mistral",
     });
 
-    this.db = db;
-
-    const osintAgent = new OsintAgent({
+    this.osintAgent = new OsintAgent({
       name: "OSINT Agent",
       llm: this.llm,
-      db: this.db,
+      db: db,
     });
 
-    const relationshipAgent = new RelationshipAgent({
+    this.relationshipAgent = new RelationshipAgent({
       name: "Relationship Agent",
       llm: this.llm,
-      db: this.db,
+      db: db,
     });
 
-    const analysisAgent = new AnalysisAgent({
+    this.analysisAgent = new AnalysisAgent({
       name: "Analysis Agent",
       llm: this.llm,
-      db: this.db,
+      db: db,
     });
-
-    this.deps = {
-      llm: this.llm,
-      db: this.db,
-      osintAgent,
-      relationshipAgent,
-      analysisAgent,
-    };
-
-    this.registry = createDefaultRegistry();
   }
 
   async investigate(
@@ -173,49 +108,21 @@ export class OrchestratorAgent {
   ): Promise<InvestigationResult> {
     const startTime = Date.now();
     const investigationId = crypto.randomUUID();
-    const trace = new TraceCollector(investigationId, userId, userInput);
 
-    console.log(`\n🎯 ============================================`);
-    console.log(`🎯 ORCHESTRATOR: Starting Investigation`);
-    console.log(`🎯 Query: "${userInput}"`);
-    console.log(`🎯 Investigation ID: ${investigationId}`);
-    console.log(`🎯 ============================================\n`);
+    console.log(`\n[Orchestrator] Starting investigation: "${userInput}" (${investigationId})`);
 
     try {
-      // ── Bootstrap Phase (always runs)
-      // Warmup: pre-load Ollama model
+      // 1. Parse intent (deterministic — no LLM call)
+      const intent = parseIntent(userInput);
+      console.log(`[Orchestrator] Intent: target=${intent.target}, type=${intent.targetType}, scope=${intent.scope}`);
+
+      // 2. Warmup LLM
       await this.llm.warmup();
 
-      // Bootstrap 1: Parse intent
-      console.log(`📝 Bootstrap 1: Parsing user intent...`);
-      trace.startStep(0, "parseIntent");
-      const intent = await parseIntent(this.llm, userInput);
-      trace.endStep("success", {
-        toolCalls: ["parseIntent"],
-        resultSummary: `target=${intent.target}, type=${intent.targetType}, scope=${intent.scope}`,
-      });
-      console.log(`✅ Intent parsed:`, JSON.stringify(intent, null, 2));
-
-      // Bootstrap 2: Create plan
-      console.log(`\n📋 Bootstrap 2: Creating investigation plan...`);
-      trace.startStep(0, "createPlan");
-      const plan = await createPlan(this.llm, intent);
-      trace.endStep("success", {
-        toolCalls: ["createPlan"],
-        resultSummary: `${plan.steps.length} steps planned`,
-      });
-      console.log(`✅ Plan created:`, JSON.stringify(plan, null, 2));
-
-      // Bootstrap 3: Prepare entity
-      console.log(`\n🔧 Bootstrap 3: Preparing entity...`);
-      trace.startStep(0, "prepareEntity");
+      // 3. Prepare entity
       const entity = await this.prepareEntity(intent, userId);
-      trace.endStep(entity.id === -1 ? "failed" : "success", {
-        toolCalls: ["getEntityByName", "createEntity"],
-        resultSummary: `entity=${entity.name} (id=${entity.id})`,
-        error: entity.id === -1 ? "Fell back to in-memory entity" : undefined,
-      });
-      console.log(`✅ Entity ready: ${entity.name} (ID: ${entity.id})`);
+      console.log(`[Orchestrator] Entity ready: ${entity.name} (id=${entity.id})`);
+
       const ctx: ExecutionContext = {
         intent,
         entity,
@@ -223,113 +130,108 @@ export class OrchestratorAgent {
         investigationId,
       };
 
-      // Sort steps by priority, then by step number
-      let sortedSteps = [...plan.steps].sort((a, b) =>
-        a.priority !== b.priority ? a.priority - b.priority : a.step - b.step
-      );
+      // 4. OSINT gathering (always runs)
+      console.log(`[Orchestrator] Step 1: OSINT gathering...`);
+      const osintResult = await this.osintAgent.execute({
+        entityId: entity.id.toString(),
+        description: `Gather comprehensive OSINT on ${intent.targetType}`,
+        target: intent.target,
+        metadata: { targetType: intent.targetType },
+      });
 
-      const completedSteps = new Set<number>();
+      if (!osintResult.success) {
+        console.error(`[Orchestrator] OSINT gathering failed: ${osintResult.error}`);
+        return this.buildFailedResult(investigationId, entity, startTime, osintResult.error);
+      }
 
-      const MAX_ITERATIONS = 15;
-      const MAX_REPLANS = 3;
-      let iterations = 0;
-      let replanCount = 0;
-      let planVersion = 1;
+      ctx.findings = mapAgentResultToFindings(osintResult.data);
+      computeFindingsStats(ctx.findings, osintResult.confidence);
+      console.log(`[Orchestrator] OSINT complete: ${ctx.findings.profiles.length} profiles found`);
 
-      console.log(
-        `\n⚡ Executing ${sortedSteps.length} planned steps...\n`
-      );
-
-      while (sortedSteps.length > 0 && iterations < MAX_ITERATIONS) {
-        iterations++;
-        const planStep = sortedSteps.shift()!;
-
-        // Check dependency
-        if (planStep.dependsOn && !completedSteps.has(planStep.dependsOn)) {
-          console.warn(
-            `⏭️ Step ${planStep.step} (${planStep.tool}) skipped — depends on uncompleted step ${planStep.dependsOn}`
-          );
-          trace.startStep(planStep.step, planStep.tool);
-          trace.endStep("skipped", {
-            resultSummary: `Dependency step ${planStep.dependsOn} not completed`,
+      // 5. Content scraping (standard and deep scopes)
+      if (intent.scope !== "quick") {
+        console.log(`[Orchestrator] Step 2: Fetching profile content...`);
+        try {
+          const contentResult = await scrapeProfileContent(ctx.findings.profiles, {
+            maxPostsPerPlatform: 10,
+            maxPlatforms: 5,
           });
-          continue;
-        }
-
-        const result = await this.executeStep(planStep, ctx, trace);
-        if (result.status === "success") {
-          completedSteps.add(planStep.step);
-        }
-
-        // EVALUATION & REPLAN LOGIC
-        if (replanCount < MAX_REPLANS) {
-          const reflection = await evaluateStepResults(
-            this.llm,
-            intent,
-            ctx.findings,
-            result,
-            planStep.tool
-          );
-
-          if (
-            reflection.needsReplan ||
-            (reflection.confidenceScore < 50 && result.status === "failed")
-          ) {
-            console.log(
-              `\n🔄 REPLAN TRIGGERED (Reason: ${reflection.reason}, Confidence: ${reflection.confidenceScore})`
-            );
-            replanCount++;
-
-            const event: ReplanEvent = {
-              stepNumber: planStep.step,
-              reason: reflection.reason,
-              previousPlanVersion: planVersion,
-              newPlanVersion: planVersion + 1,
-              confidenceScore: reflection.confidenceScore,
-            };
-            trace.addReplanEvent(event);
-            planVersion++;
-
-            const newPlan = await replanFromContext(
-              this.llm,
-              intent,
-              ctx,
-              Array.from(completedSteps),
-              reflection.reason
-            );
-
-            // Keep steps from the new plan that haven't been completed yet
-            const newRemaining = newPlan.steps.filter(
-              (s) => !completedSteps.has(s.step)
-            );
-            sortedSteps = [...newRemaining].sort((a, b) =>
-              a.priority !== b.priority
-                ? a.priority - b.priority
-                : a.step - b.step
-            );
-
-            console.log(
-              `✅ Replan complete. ${sortedSteps.length} steps remaining in new plan.`
-            );
-          }
+          ctx.findings.contentData = contentResult.contents;
+          console.log(`[Orchestrator] Content: ${contentResult.summary.totalPosts} posts from ${contentResult.summary.platformsScraped} platforms`);
+        } catch (error) {
+          console.warn(`[Orchestrator] Content scraping failed (non-fatal):`, error instanceof Error ? error.message : error);
         }
       }
 
-      if (iterations >= MAX_ITERATIONS && sortedSteps.length > 0) {
-        console.warn(`\n⚠️ Maximum iterations (${MAX_ITERATIONS}) reached. Halting execution.`);
-        trace.addError(`Max iterations (${MAX_ITERATIONS}) reached`);
+      // 6. Content analysis (standard and deep scopes, if content was scraped)
+      let contentAnalysis: ContentAnalysis | undefined;
+      if (ctx.findings.contentData && ctx.findings.contentData.length > 0) {
+        console.log(`[Orchestrator] Step 2b: Analyzing content...`);
+        contentAnalysis = analyzeContent(ctx.findings.contentData);
+        ctx.contentAnalysis = contentAnalysis;
+        console.log(`[Orchestrator] Content analysis: ${contentAnalysis.topTopics.length} topics, sentiment=${contentAnalysis.sentiment}, ${contentAnalysis.redFlags.length} red flags`);
       }
 
-      // ── Finalize ───────────────────────────────────────────────
+      // 7. Risk analysis + recommendations (always runs)
+      console.log(`[Orchestrator] Step 3: Risk analysis...`);
+      ctx.analysis = await analyzeResults(this.llm, ctx.findings, intent, contentAnalysis);
+      ctx.recommendations = generateRecommendations(ctx.findings, ctx.analysis.riskScore);
+      console.log(`[Orchestrator] Risk score: ${ctx.analysis.riskScore}/10, ${ctx.recommendations.length} recommendations`);
+
+      // 7. Store + relationships (standard and deep scopes, skip if in-memory entity)
+      if (intent.scope !== "quick" && entity.id !== -1) {
+        console.log(`[Orchestrator] Step 4: Storing findings...`);
+        await storeOsintFindings(entity.id, {
+          findings: ctx.findings,
+          analysis: ctx.analysis,
+          recommendations: ctx.recommendations,
+          investigationId,
+        });
+
+        console.log(`[Orchestrator] Step 5: Discovering relationships...`);
+        const relResult = await this.relationshipAgent.execute({
+          entityId: entity.id.toString(),
+          description: "Discover and map relationships",
+          target: entity.name,
+        });
+
+        if (relResult.success) {
+          ctx.relationships = relResult.data?.relationships;
+          ctx.networkAnalysis = relResult.data?.networkAnalysis;
+          ctx.graphData = relResult.data?.graphData;
+          console.log(`[Orchestrator] Relationships: ${relResult.data?.relationships?.length || 0} connections`);
+        } else {
+          console.warn(`[Orchestrator] Relationship discovery failed (non-fatal): ${relResult.error}`);
+        }
+      }
+
+      // 8. Deep analysis (deep scope only, skip if in-memory entity)
+      if (intent.scope === "deep" && entity.id !== -1) {
+        console.log(`[Orchestrator] Step 6: Deep behavioral analysis...`);
+        const analysisResult = await this.analysisAgent.execute({
+          entityId: entity.id.toString(),
+          description: "Deep behavioral analysis and digital footprint monitoring",
+          target: entity.name,
+          metadata: {
+            investigationData: {
+              findings: ctx.findings,
+              relationships: ctx.relationships,
+              networkAnalysis: ctx.networkAnalysis,
+            },
+          },
+        });
+
+        if (analysisResult.success) {
+          ctx.deepAnalysis = analysisResult.data;
+          console.log(`[Orchestrator] Deep analysis: ${analysisResult.data?.insights?.length || 0} insights`);
+        } else {
+          console.warn(`[Orchestrator] Deep analysis failed (non-fatal): ${analysisResult.error}`);
+        }
+      }
+
+      // 8. Done
       const duration = Math.round((Date.now() - startTime) / 1000);
-      const finalTrace = trace.finalize("completed");
-      await this.persistTrace(finalTrace, entity.id);
-
-      console.log(`\n✅ ============================================`);
-      console.log(`✅ INVESTIGATION COMPLETE`);
-      console.log(`✅ Duration: ${duration} seconds`);
-      console.log(`✅ Steps executed: ${completedSteps.size}/${sortedSteps.length}`);
-      console.log(`✅ ============================================\n`);
+      console.log(`[Orchestrator] Investigation complete in ${duration}s`);
 
       return {
         investigationId,
@@ -338,25 +240,18 @@ export class OrchestratorAgent {
         findings: ctx.findings,
         analysis: ctx.analysis,
         recommendations: ctx.recommendations,
+        contentAnalysis,
         relationships: ctx.relationships,
         networkAnalysis: ctx.networkAnalysis,
         graphData: ctx.graphData,
         deepAnalysis: ctx.deepAnalysis,
-        trace: finalTrace,
         duration,
         createdAt: new Date(),
       };
     } catch (error: unknown) {
       const err = getSafeErrorInfo(error);
-      console.error(`\nInvestigation failed: ${err.name}: ${err.message}`);
-      if (err.stack) {
-        console.error(err.stack);
-      }
+      console.error(`[Orchestrator] Investigation failed: ${err.name}: ${err.message}`);
       const duration = Math.round((Date.now() - startTime) / 1000);
-
-      trace.addError(`${err.name}: ${err.message}`);
-      const finalTrace = trace.finalize("failed");
-      await this.persistTrace(finalTrace);
 
       return {
         investigationId,
@@ -364,107 +259,36 @@ export class OrchestratorAgent {
         status: "failed",
         findings: { profiles: [], emails: [], domains: [], metadata: {} },
         recommendations: ["Investigation failed. Please try again."],
-        trace: finalTrace,
         duration,
         createdAt: new Date(),
       };
     }
   }
 
-  // ── Step Dispatch 
-  private async executeStep(
-    planStep: PlanStep,
-    ctx: ExecutionContext,
-    trace: TraceCollector
-  ): Promise<StepResult> {
-    const handler = this.registry.get(planStep.tool);
-
-    console.log(
-      `🔧 Step ${planStep.step}: ${planStep.action} [${planStep.tool}]`
-    );
-
-    trace.startStep(planStep.step, planStep.tool);
-
-    if (!handler) {
-      const errorMsg = `Unknown tool: "${planStep.tool}"`;
-      console.warn(`❌ ${errorMsg}`);
-      trace.endStep("failed", {
-        error: errorMsg,
-        resultSummary: errorMsg,
-      });
-      return { status: "failed", summary: errorMsg, error: errorMsg };
-    }
-
-    try {
-      const result = await executeWithTimeout(
-        () => handler.execute(ctx, this.deps),
-        DEFAULT_STEP_TIMEOUT_MS,
-        planStep.tool
-      );
-
-      trace.endStep(result.status, {
-        agentName: handler.name,
-        confidenceAfter: result.confidence,
-        toolCalls: [planStep.tool],
-        resultSummary: result.summary,
-        error: result.error,
-      });
-
-      return result;
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      console.warn(
-        `⚠️ Step ${planStep.step} (${planStep.tool}) failed: ${errMsg}`
-      );
-      trace.endStep("failed", {
-        agentName: handler.name,
-        toolCalls: [planStep.tool],
-        resultSummary: `Failed: ${errMsg}`,
-        error: errMsg,
-      });
-      return { status: "failed", summary: `Failed: ${errMsg}`, error: errMsg };
-    }
-  }
-
-  // ── Helpers 
-  private async persistTrace(
-    traceData: InvestigationTrace,
-    entityId?: number
-  ): Promise<void> {
-    try {
-      await db.insert(investigationTraces).values({
-        id: traceData.traceId,
-        userId: traceData.userId,
-        entityId: entityId && entityId !== -1 ? entityId : null,
-        target: traceData.target,
-        status: traceData.status,
-        planVersion: traceData.planVersion,
-        steps: traceData.steps as any,
-        errors: traceData.errors as any,
-        replanEvents: traceData.replanEvents as any,
-        totalLatencyMs: traceData.totalLatencyMs,
-        startedAt: traceData.startedAt,
-        completedAt: traceData.completedAt,
-      });
-      console.log(`📊 Trace persisted: ${traceData.traceId}`);
-    } catch (error) {
-      console.warn(
-        `⚠️ Failed to persist trace (non-fatal):`,
-        error instanceof Error ? error.message : error
-      );
-    }
+  private buildFailedResult(
+    investigationId: string,
+    entity: any,
+    startTime: number,
+    error?: string
+  ): InvestigationResult {
+    return {
+      investigationId,
+      entity,
+      status: "failed",
+      findings: { profiles: [], emails: [], domains: [], metadata: {} },
+      recommendations: [error || "Investigation failed. Please try again."],
+      duration: Math.round((Date.now() - startTime) / 1000),
+      createdAt: new Date(),
+    };
   }
 
   private async prepareEntity(intent: Intent, userId: string) {
     try {
       const existing = await getEntityByName(intent.target, userId);
-
       if (existing) {
-        console.log(`📦 Found existing entity: ${intent.target}`);
         return existing;
       }
 
-      console.log(`✨ Creating new entity: ${intent.target}`);
       return await createEntity({
         name: intent.target,
         type: intent.targetType,
@@ -477,7 +301,7 @@ export class OrchestratorAgent {
       });
     } catch (error) {
       console.warn(
-        `⚠️ DB entity operation failed, using in-memory entity:`,
+        `[Orchestrator] DB entity operation failed, using in-memory entity:`,
         error instanceof Error ? error.message : error
       );
       return {

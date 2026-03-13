@@ -9,15 +9,18 @@ import {
     buildTimeline,
     analyzeDigitalFootprint,
     generateActionableInsights,
+    analyzeContent,
     BehaviorProfile,
     TimelineEvent,
     DigitalFootprintAnalysis,
     GeneratedInsight,
+    ContentAnalysis,
 } from "./tools/analysis-tools";
 
 export interface AnalysisResult {
     behaviorProfile: BehaviorProfile;
     timeline: TimelineEvent[];
+    contentAnalysis?: ContentAnalysis;
     digitalFootprint: DigitalFootprintAnalysis;
     insights: GeneratedInsight[];
     summary: string;
@@ -98,13 +101,31 @@ export class AnalysisAgent extends BaseAgent {
             );
             console.log(`  ✅ Risk Areas: ${digitalFootprint.riskAreas.length}`);
 
-            // 4. Generate Actionable Insights
-            console.log(`\n💡 Step 4: Generating actionable insights...`);
+            // 4. Analyze Content (if available)
+            let contentAnalysis: ContentAnalysis | undefined;
+            const contentData = investigationData.findings?.contentData;
+            if (contentData && contentData.length > 0) {
+                console.log(`\n📝 Step 4: Analyzing content from ${contentData.length} platforms...`);
+                contentAnalysis = analyzeContent(contentData);
+                console.log(`  ✅ Topics: ${contentAnalysis.topTopics.length}`);
+                console.log(`  ✅ Sentiment: ${contentAnalysis.sentiment}`);
+                console.log(`  ✅ Interests: ${contentAnalysis.interests.length}`);
+                console.log(`  ✅ Red Flags: ${contentAnalysis.redFlags.length}`);
+                if (contentAnalysis.languagesUsed.length > 0) {
+                    console.log(`  ✅ Languages: ${contentAnalysis.languagesUsed.join(", ")}`);
+                }
+            } else {
+                console.log(`\n📝 Step 4: No content data available — skipping content analysis`);
+            }
+
+            // 5. Generate Actionable Insights
+            console.log(`\n💡 Step 5: Generating actionable insights...`);
             const insights = generateActionableInsights({
                 behaviorProfile,
                 timeline,
                 digitalFootprint,
                 findings: investigationData.findings,
+                contentAnalysis,
             });
             console.log(`  ✅ Total Insights: ${insights.length}`);
             console.log(
@@ -114,7 +135,7 @@ export class AnalysisAgent extends BaseAgent {
                 `  ✅ High Priority: ${insights.filter((i) => i.priority === "high").length}`
             );
 
-            // 5. Generate Summary
+            // 6. Generate Summary
             const summary = this.generateSummary(
                 behaviorProfile,
                 digitalFootprint,
@@ -122,7 +143,7 @@ export class AnalysisAgent extends BaseAgent {
                 insights
             );
 
-            // 6. Calculate Confidence
+            // 7. Calculate Confidence
             const confidence = this.calculateConfidence(
                 behaviorProfile,
                 digitalFootprint,
@@ -143,6 +164,7 @@ export class AnalysisAgent extends BaseAgent {
                     behaviorProfile,
                     timeline,
                     digitalFootprint,
+                    contentAnalysis,
                     insights,
                     summary,
                     confidence,

@@ -132,7 +132,19 @@ interface InvestigationData {
     recommendations?: string[];
     relationships?: any[];
     networkAnalysis?: any;
-    deepAnalysis?: DeepAnalysisData;  // ← NEW FIELD
+    contentAnalysis?: {
+        topTopics: Array<{ topic: string; frequency: number; platforms: string[] }>;
+        sentiment: "positive" | "neutral" | "negative" | "mixed";
+        interests: string[];
+        activityPatterns: {
+            mostActivePlatform: string;
+            totalPostsAnalyzed: number;
+            contentTypes: string[];
+        };
+        languagesUsed: string[];
+        redFlags: Array<{ flag: string; evidence: string; severity: "high" | "medium" | "low" }>;
+    };
+    deepAnalysis?: DeepAnalysisData;
     duration: number;
     createdAt: string;
 }
@@ -1815,6 +1827,68 @@ export function generateInvestigationReport(data: InvestigationData): void {
             columnStyles: { 0: { cellWidth: 10, halign: "center" }, 3: { cellWidth: 22, halign: "center" } },
         });
         y = (doc as any).lastAutoTable.finalY + 6;
+    }
+
+    // CONTENT ANALYSIS
+    if (data.contentAnalysis && data.contentAnalysis.activityPatterns.totalPostsAnalyzed > 0) {
+        const ca = data.contentAnalysis;
+        y = drawSectionHeader(doc, "Content Analysis", y);
+
+        // Summary row
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(...COLORS.body);
+        const summaryText = `Analyzed ${ca.activityPatterns.totalPostsAnalyzed} posts across ${ca.activityPatterns.contentTypes.join(", ")} content. Overall sentiment: ${ca.sentiment.toUpperCase()}. Most active platform: ${ca.activityPatterns.mostActivePlatform}.`;
+        const summaryLines = doc.splitTextToSize(summaryText, contentWidth);
+        y = checkPageBreak(doc, y, summaryLines.length * 4 + 4);
+        doc.text(summaryLines, 20, y);
+        y += summaryLines.length * 4 + 4;
+
+        // Topics & Interests table
+        const contentRows: string[][] = [];
+        if (ca.interests.length > 0) {
+            contentRows.push(["Interests", ca.interests.slice(0, 10).join(", ")]);
+        }
+        if (ca.languagesUsed.length > 0) {
+            contentRows.push(["Programming Languages", ca.languagesUsed.join(", ")]);
+        }
+        if (ca.topTopics.length > 0) {
+            contentRows.push(["Top Topics", ca.topTopics.slice(0, 8).map((t: any) => `${t.topic} (${t.frequency})`).join(", ")]);
+        }
+        if (ca.redFlags.length > 0) {
+            contentRows.push(["Red Flags", ca.redFlags.map((f: any) => `${f.flag} [${f.severity}]`).join("; ")]);
+        }
+        contentRows.push(["Content Types", ca.activityPatterns.contentTypes.join(", ")]);
+        contentRows.push(["Sentiment", ca.sentiment.toUpperCase()]);
+
+        if (contentRows.length > 0) {
+            autoTable(doc, {
+                startY: y,
+                margin: { left: 20, right: 20 },
+                head: [["Metric", "Details"]],
+                body: contentRows,
+                theme: "grid",
+                styles: { fontSize: 8, cellPadding: 3, textColor: COLORS.body, lineColor: COLORS.border, lineWidth: 0.2 },
+                headStyles: { fillColor: COLORS.primary, textColor: COLORS.white, fontStyle: "bold", fontSize: 8 },
+                alternateRowStyles: { fillColor: COLORS.altRow },
+                columnStyles: { 0: { cellWidth: 45, fontStyle: "bold" } },
+                didParseCell: (hookData: any) => {
+                    if (hookData.section === "body") {
+                        const prop = hookData.row.raw?.[0] as string;
+                        if (prop === "Red Flags" && hookData.column.index === 1) {
+                            hookData.cell.styles.textColor = COLORS.red;
+                        }
+                        if (prop === "Sentiment" && hookData.column.index === 1) {
+                            const val = hookData.row.raw?.[1] as string;
+                            if (val === "NEGATIVE") hookData.cell.styles.textColor = COLORS.red;
+                            else if (val === "POSITIVE") hookData.cell.styles.textColor = COLORS.green;
+                            else if (val === "MIXED") hookData.cell.styles.textColor = COLORS.yellow;
+                        }
+                    }
+                },
+            });
+            y = (doc as any).lastAutoTable.finalY + 6;
+        }
     }
 
     // INVESTIGATION METADATA

@@ -2,10 +2,10 @@ import { z } from "zod";
 import type { DiscoveredRelationship, NetworkAnalysis } from "../relationship-agent";
 import type { AnalysisResult } from "../analysis-agent";
 
-// Intent Schema (updated with metadata)
+// Intent Schema
 export const IntentSchema = z.object({
   target: z.string().describe("The target to investigate (username, email, domain, etc.)"),
-  targetType: z.enum(["username", "email", "domain", "ip", "person", "organization"])
+  targetType: z.enum(["username", "email", "domain", "ip", "phone", "person", "organization"])
     .describe("Type of target"),
   intent: z.enum(["investigate", "monitor", "analyze", "search"])
     .describe("What the user wants to do"),
@@ -19,33 +19,6 @@ export const IntentSchema = z.object({
 
 export type Intent = z.infer<typeof IntentSchema>;
 
-// Investigation Plan Schema
-export const PlanStepSchema = z.object({
-  step: z.number().describe("Step number in sequence"),
-  action: z.string().describe("What action to take"),
-  tool: z.string().describe("Which tool/function to use"),
-  priority: z.number().min(1).describe("Priority level (1=highest)"),
-  dependsOn: z.preprocess(
-    (val) => (Array.isArray(val) ? val[0] ?? undefined : val),
-    z.number().optional(),
-  ).describe("Step number this depends on"),
-});
-
-export const InvestigationPlanSchema = z.object({
-  steps: z.array(PlanStepSchema),
-  estimatedDuration: z.string().describe("Estimated time to complete"),
-});
-export type PlanStep = z.infer<typeof PlanStepSchema>;
-export type InvestigationPlan = z.infer<typeof InvestigationPlanSchema>;
-
-// Step Execution Results
-export interface StepResult {
-  status: "success" | "failed" | "skipped";
-  summary: string;
-  confidence?: number;
-  error?: string;
-}
-
 // Execution Context — mutable bag that accumulates results across steps
 export interface ExecutionContext {
   intent: Intent;
@@ -57,22 +30,8 @@ export interface ExecutionContext {
   networkAnalysis?: any;
   graphData?: any;
   deepAnalysis?: any;
-  [key: string]: any;
-}
-
-// Tool Handler — registry entry for a single tool
-export interface ToolHandler {
-  name: string;
-  execute(ctx: ExecutionContext, deps: ToolDependencies): Promise<StepResult>;
-}
-
-// Dependencies injected into tool handlers
-export interface ToolDependencies {
-  llm: any;
-  db: any;
-  osintAgent: any;
-  relationshipAgent: any;
-  analysisAgent: any;
+  contentAnalysis?: import("../tools/analysis-tools").ContentAnalysis;
+  investigationId: string;
 }
 
 // Task for agents
@@ -92,7 +51,7 @@ export interface AgentResult {
   confidence?: number;
 }
 
-// OSINT Target used in iteractive queue
+// OSINT Target used in iterative queue
 export interface OsintTarget {
   term: string;
   type: "person" | "username" | "email" | "domain" | "phone";
@@ -117,49 +76,8 @@ export interface OsintFindings {
   domains: Array<{ domain: string; provenance?: { sourceTarget: string; pivotDepth: number }; data?: any }>;
   phones?: Array<{ number: string; provenance?: { sourceTarget: string; pivotDepth: number }; data?: any }>;
   webResults?: Array<{ title: string; url: string; snippet: string }>;
+  contentData?: import("../tools/content-scraper").ScrapedContent[];
   metadata: Record<string, any>;
-}
-
-// Execution Trace — step-level telemetry
-export interface TraceStep {
-  stepNumber: number;
-  name: string;
-  status: "success" | "failed" | "skipped";
-  latencyMs: number;
-  agentName?: string;
-  confidenceBefore?: number;
-  confidenceAfter?: number;
-  toolCalls?: string[];
-  resultSummary?: string;
-  error?: string;
-}
-
-export interface ReplanEvent {
-  stepNumber: number;
-  reason: string;
-  previousPlanVersion: number;
-  newPlanVersion: number;
-  confidenceScore?: number;
-}
-
-export interface ReflectionResult {
-  needsReplan: boolean;
-  reason: string;
-  confidenceScore: number;
-}
-
-export interface InvestigationTrace {
-  traceId: string;
-  userId: string;
-  target: string;
-  planVersion: number;
-  steps: TraceStep[];
-  totalLatencyMs: number;
-  status: "completed" | "failed" | "partial";
-  errors: string[];
-  replanEvents?: ReplanEvent[];
-  startedAt: Date;
-  completedAt: Date;
 }
 
 // Investigation Result (final output)
@@ -174,11 +92,11 @@ export interface InvestigationResult {
     summary: string;
   };
   recommendations?: string[];
+  contentAnalysis?: import("../tools/analysis-tools").ContentAnalysis;
   relationships?: DiscoveredRelationship[];
   networkAnalysis?: NetworkAnalysis;
   graphData?: { nodes: any[]; edges: any[] };
   deepAnalysis?: AnalysisResult;
-  trace?: InvestigationTrace;
   duration: number; // in seconds
   createdAt: Date;
 }

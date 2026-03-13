@@ -612,6 +612,7 @@ export function generateActionableInsights(data: {
     timeline: TimelineEvent[];
     digitalFootprint: DigitalFootprintAnalysis;
     findings: any;
+    contentAnalysis?: ContentAnalysis;
 }): GeneratedInsight[] {
     const insights: GeneratedInsight[] = [];
 
@@ -722,8 +723,264 @@ export function generateActionableInsights(data: {
         });
     }
 
+    // Content-based insights (from scraped posts)
+    if (data.contentAnalysis) {
+        const ca = data.contentAnalysis;
+
+        // Red flags from content
+        for (const rf of ca.redFlags) {
+            insights.push({
+                category: "security",
+                priority: rf.severity === "high" ? "high" : "medium",
+                insight: rf.flag,
+                evidence: [rf.evidence],
+                recommendation: "Review flagged content for security implications",
+                impact: "Content may indicate security awareness gaps or risky behavior",
+            });
+        }
+
+        // Negative sentiment
+        if (ca.sentiment === "negative") {
+            insights.push({
+                category: "reputation",
+                priority: "medium",
+                insight: "Overall negative sentiment detected in public content",
+                evidence: [`Sentiment analysis across ${ca.activityPatterns.totalPostsAnalyzed} posts`],
+                recommendation: "Monitor public communications for reputational risk",
+                impact: "Negative public sentiment may affect professional reputation",
+            });
+        }
+
+        // Topic-based interests
+        if (ca.topTopics.length > 0) {
+            const crossPlatformTopics = ca.topTopics.filter((t) => t.platforms.length >= 2);
+            if (crossPlatformTopics.length > 0) {
+                insights.push({
+                    category: "strategic",
+                    priority: "low",
+                    insight: `Key interests identified across platforms: ${crossPlatformTopics.map((t) => t.topic).join(", ")}`,
+                    evidence: crossPlatformTopics.map((t) => `"${t.topic}" found on ${t.platforms.join(", ")}`),
+                    recommendation: "Use identified interests for social engineering awareness training",
+                    impact: "Cross-platform interests can be leveraged in targeted attacks",
+                });
+            }
+        }
+
+        // Technical profile
+        if (ca.languagesUsed.length > 0) {
+            insights.push({
+                category: "operational",
+                priority: "low",
+                insight: `Technical profile: ${ca.languagesUsed.join(", ")}`,
+                evidence: [`Programming languages detected from GitHub activity`],
+                recommendation: "Note technical capabilities for threat modeling",
+                impact: "Technical skills indicate potential attack surface knowledge",
+            });
+        }
+    }
+
     return insights.sort((a, b) => {
         const priorityOrder = { critical: 4, high: 3, medium: 2, low: 1 };
         return priorityOrder[b.priority] - priorityOrder[a.priority];
     });
 }
+
+// ── Content Analysis ────────────────────────────────────────────────────
+
+import type { ScrapedContent } from "./content-scraper";
+
+export interface ContentAnalysis {
+    topTopics: Array<{ topic: string; frequency: number; platforms: string[] }>;
+    sentiment: "positive" | "neutral" | "negative" | "mixed";
+    interests: string[];
+    activityPatterns: {
+        mostActivePlatform: string;
+        totalPostsAnalyzed: number;
+        contentTypes: string[];
+    };
+    languagesUsed: string[];
+    redFlags: Array<{ flag: string; evidence: string; severity: "high" | "medium" | "low" }>;
+}
+
+// Simple sentiment word lists — no ML needed
+const POSITIVE_WORDS = new Set([
+    "great", "love", "amazing", "awesome", "excellent", "good", "happy", "excited",
+    "fantastic", "wonderful", "best", "beautiful", "helpful", "brilliant", "enjoy",
+    "thanks", "thank", "pleased", "success", "successful", "proud", "achievement",
+]);
+const NEGATIVE_WORDS = new Set([
+    "bad", "hate", "terrible", "awful", "worst", "horrible", "angry", "sad",
+    "disappointed", "fail", "failed", "broken", "bug", "issue", "problem",
+    "frustrated", "annoyed", "stupid", "scam", "fraud", "vulnerability",
+]);
+const RED_FLAG_PATTERNS: Array<{ pattern: RegExp; flag: string; severity: "high" | "medium" | "low" }> = [
+    { pattern: /\b(password|passwd|cred(ential)?s?)\b/i, flag: "Credential exposure risk", severity: "high" },
+    { pattern: /\b(hack(ed|ing)?|exploit|pwn)\b/i, flag: "Security-related content", severity: "medium" },
+    { pattern: /\b(leaked?|dump|breach)\b/i, flag: "References to data leaks", severity: "medium" },
+    { pattern: /\b(dark\s?web|tor\s|onion)\b/i, flag: "Dark web references", severity: "high" },
+    { pattern: /\b(crypto|bitcoin|ethereum|wallet)\b/i, flag: "Cryptocurrency activity", severity: "low" },
+    { pattern: /\b(vpn|proxy|anonym)/i, flag: "Anonymization tool references", severity: "low" },
+];
+
+/**
+ * Analyze scraped content for topics, sentiment, interests, and red flags.
+ * Pure heuristics — no LLM calls.
+ */
+export function analyzeContent(contents: ScrapedContent[]): ContentAnalysis {
+    const topicCounts = new Map<string, { count: number; platforms: Set<string> }>();
+    let positiveScore = 0;
+    let negativeScore = 0;
+    let totalWords = 0;
+    let totalPosts = 0;
+    const platformPostCounts = new Map<string, number>();
+    const contentTypeSet = new Set<string>();
+    const languageSet = new Set<string>();
+    const redFlags: ContentAnalysis["redFlags"] = [];
+    const redFlagsSeen = new Set<string>();
+
+    for (const content of contents) {
+        const postCount = content.posts.length;
+        totalPosts += postCount;
+        platformPostCounts.set(content.platform, (platformPostCounts.get(content.platform) || 0) + postCount);
+
+        // Categorize content type by platform
+        if (content.platform === "GitHub") contentTypeSet.add("technical");
+        else if (content.platform === "LinkedIn") contentTypeSet.add("professional");
+        else if (content.platform === "Reddit") contentTypeSet.add("community");
+        else if (content.platform === "Medium" || content.platform === "Dev.to") contentTypeSet.add("articles");
+        else if (["X", "Instagram", "TikTok", "Facebook"].includes(content.platform)) contentTypeSet.add("social");
+        else contentTypeSet.add("other");
+
+        // Collect topics from platform-reported topics
+        for (const topic of content.topics) {
+            const normalized = topic.toLowerCase().trim();
+            if (normalized.length < 2) continue;
+            const entry = topicCounts.get(normalized) || { count: 0, platforms: new Set() };
+            entry.count++;
+            entry.platforms.add(content.platform);
+            topicCounts.set(normalized, entry);
+        }
+
+        // Programming languages (from GitHub topics)
+        if (content.platform === "GitHub") {
+            for (const topic of content.topics) {
+                // Common programming language names
+                const lang = topic.toLowerCase();
+                if (PROGRAMMING_LANGUAGES.has(lang)) {
+                    languageSet.add(topic);
+                }
+            }
+        }
+
+        // Analyze each post
+        for (const post of content.posts) {
+            const text = `${post.title || ""} ${post.body}`.toLowerCase();
+            const words = text.split(/\s+/).filter((w) => w.length > 2);
+            totalWords += words.length;
+
+            // Sentiment
+            for (const word of words) {
+                const clean = word.replace(/[^a-z]/g, "");
+                if (POSITIVE_WORDS.has(clean)) positiveScore++;
+                if (NEGATIVE_WORDS.has(clean)) negativeScore++;
+            }
+
+            // Red flags
+            for (const { pattern, flag, severity } of RED_FLAG_PATTERNS) {
+                if (pattern.test(text) && !redFlagsSeen.has(flag)) {
+                    redFlagsSeen.add(flag);
+                    const match = text.match(pattern);
+                    redFlags.push({
+                        flag,
+                        evidence: `Found "${match?.[0]}" in ${content.platform} content`,
+                        severity,
+                    });
+                }
+            }
+
+            // Extract topics from post titles (simple keyword extraction)
+            if (post.title) {
+                const titleWords = post.title.toLowerCase()
+                    .replace(/[^a-z0-9\s]/g, "")
+                    .split(/\s+/)
+                    .filter((w) => w.length > 3 && !STOP_WORDS.has(w));
+                for (const word of titleWords) {
+                    const entry = topicCounts.get(word) || { count: 0, platforms: new Set() };
+                    entry.count++;
+                    entry.platforms.add(content.platform);
+                    topicCounts.set(word, entry);
+                }
+            }
+        }
+    }
+
+    // Build top topics (sorted by frequency, min 2 occurrences)
+    const topTopics = Array.from(topicCounts.entries())
+        .filter(([, v]) => v.count >= 2)
+        .sort((a, b) => b[1].count - a[1].count)
+        .slice(0, 15)
+        .map(([topic, v]) => ({
+            topic,
+            frequency: v.count,
+            platforms: Array.from(v.platforms),
+        }));
+
+    // Determine overall sentiment
+    let sentiment: ContentAnalysis["sentiment"];
+    const sentimentRatio = totalWords > 0 ? (positiveScore - negativeScore) / Math.max(totalWords, 1) : 0;
+    if (positiveScore > 0 && negativeScore > 0 && Math.abs(sentimentRatio) < 0.01) {
+        sentiment = "mixed";
+    } else if (sentimentRatio > 0.005) {
+        sentiment = "positive";
+    } else if (sentimentRatio < -0.005) {
+        sentiment = "negative";
+    } else {
+        sentiment = "neutral";
+    }
+
+    // Most active platform
+    let mostActivePlatform = "Unknown";
+    let maxPosts = 0;
+    for (const [platform, count] of platformPostCounts) {
+        if (count > maxPosts) {
+            maxPosts = count;
+            mostActivePlatform = platform;
+        }
+    }
+
+    // Interests: top topics that appear on multiple platforms
+    const interests = topTopics
+        .filter((t) => t.platforms.length >= 1)
+        .slice(0, 10)
+        .map((t) => t.topic);
+
+    return {
+        topTopics,
+        sentiment,
+        interests,
+        activityPatterns: {
+            mostActivePlatform,
+            totalPostsAnalyzed: totalPosts,
+            contentTypes: Array.from(contentTypeSet),
+        },
+        languagesUsed: Array.from(languageSet),
+        redFlags,
+    };
+}
+
+const PROGRAMMING_LANGUAGES = new Set([
+    "javascript", "typescript", "python", "java", "c", "c++", "c#", "go",
+    "rust", "ruby", "php", "swift", "kotlin", "dart", "scala", "r",
+    "html", "css", "sql", "shell", "bash", "powershell", "lua", "perl",
+    "haskell", "elixir", "clojure", "objective-c", "assembly", "zig",
+]);
+
+const STOP_WORDS = new Set([
+    "the", "and", "for", "are", "but", "not", "you", "all", "can", "has",
+    "her", "was", "one", "our", "out", "that", "this", "with", "from",
+    "they", "been", "have", "will", "what", "when", "make", "like",
+    "just", "over", "such", "take", "than", "them", "very", "some",
+    "into", "most", "other", "about", "more", "also", "made", "after",
+    "many", "these", "then", "would", "each", "which", "their", "said",
+    "comment", "post", "commit", "issue", "repo", "updated", "added",
+]);

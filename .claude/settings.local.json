@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsc --noEmit --pretty)"
+      "Bash(npx tsc --noEmit --pretty)",
+      "Bash(ls -la /d/septo/src/app/*.tsx /d/septo/src/app/*.ts 2>/dev/null)",
+      "Bash(find /d/septo/src/components -name \"*.tsx\" | xargs wc -l | sort -rn | head -15)",
+      "Bash(git -C /d/septo log --oneline -20)"
     ]
   }
 }

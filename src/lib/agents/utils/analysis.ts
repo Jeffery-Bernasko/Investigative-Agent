@@ -4,6 +4,7 @@ import {
     calculateRiskScore,
     generateInsights,
 } from "../tools/osint-tools";
+import type { ContentAnalysis } from "../tools/analysis-tools";
 import { generateSummary } from "./llm-helpers";
 
 /**
@@ -12,10 +13,11 @@ import { generateSummary } from "./llm-helpers";
 export async function analyzeResults(
     llm: OllamaClient,
     findings: OsintFindings,
-    intent: Intent
+    intent: Intent,
+    contentAnalysis?: ContentAnalysis,
 ) {
     const riskScore = calculateRiskScore(findings);
-    const summary = await generateSummary(llm, findings, intent, riskScore);
+    const summary = await generateSummary(llm, findings, intent, riskScore, contentAnalysis);
     const insights = generateInsights(findings, riskScore);
 
     return { riskScore, summary, insights };

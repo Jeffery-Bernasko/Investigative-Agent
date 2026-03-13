@@ -130,6 +130,18 @@ export interface InvestigationData {
     recommendations?: string[];
     relationships?: any[];
     networkAnalysis?: any;
+    contentAnalysis?: {
+        topTopics: Array<{ topic: string; frequency: number; platforms: string[] }>;
+        sentiment: "positive" | "neutral" | "negative" | "mixed";
+        interests: string[];
+        activityPatterns: {
+            mostActivePlatform: string;
+            totalPostsAnalyzed: number;
+            contentTypes: string[];
+        };
+        languagesUsed: string[];
+        redFlags: Array<{ flag: string; evidence: string; severity: "high" | "medium" | "low" }>;
+    };
     deepAnalysis?: DeepAnalysisData;
     duration: number;
     createdAt: string;

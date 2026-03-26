@@ -117,6 +117,14 @@ const navigation = [
     highlight: true, // New feature highlight
   },
   {
+    name: "Investigative Agent",
+    href: "/investigative-agent",
+    icon: Fingerprint,
+    description: "Person OSINT + PDF",
+    badge: "NEW",
+    highlight: true,
+  },
+  {
     name: "Entities",
     href: "/entities",
     icon: Users,

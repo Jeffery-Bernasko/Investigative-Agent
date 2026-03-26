@@ -23,6 +23,35 @@
 - **Vector Search** - Semantic search powered by pgvector and AI embeddings
 - **AI Analysis** - Natural language queries with Azure OpenAI / OpenAI integration
 
+### 🕵️ Investigative Agent (Person-Focused OSINT)
+- **Person Search** - Discover social media profiles across 20+ platforms from a full name
+- **Website Discovery** - Detect personal sites, portfolios, and blogs associated with the target
+- **Digital Footprint Analysis** - Presence breadth, identity consistency, risk signals, impersonation checks
+- **PII Redaction** - Sensitive data (email/phone) is redacted by default; opt-in for raw values
+- **Avatar Retrieval** - Downloads profile pictures from GitHub, Reddit, Mastodon, Dev.to and embeds them in the PDF
+- **PDF Report** - Generates a formatted A4 PDF with profiles, websites, analysis, and recommendations
+- **Pluggable Search** - Supports Tavily, SerpAPI (Google), and Bing Web Search; configure via env vars
+
+#### Investigative Agent API
+
+```bash
+# Check service status
+GET /api/investigative-agent
+
+# Run an investigation
+POST /api/investigative-agent
+Content-Type: application/json
+{
+  "fullName": "Jane Doe",
+  "location": "London",          # optional
+  "employer": "Acme Corp",       # optional
+  "usernameHints": ["janedoe"],  # optional, up to 5
+  "includeRawPii": false         # default: false (redact PII)
+}
+```
+
+Response includes `profiles`, `websites`, `footprintAnalysis`, and report metadata ready for PDF generation.
+
 ### OSINT Tools
 - **Username Enumeration** - Search 200+ platforms for matching usernames
 - **Email Intelligence** - Verify emails, check breaches (HIBP), Gravatar lookup
@@ -127,6 +156,27 @@ NEXT_PUBLIC_APP_URL="http://localhost:3000"
 # AZURE_OPENAI_API_KEY="your-api-key"
 # AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4"
 # AZURE_OPENAI_API_VERSION="2024-02-15-preview"
+
+# ===========================================
+# INVESTIGATIVE AGENT — Web Search (at least one required)
+# ===========================================
+# The agent automatically selects the first available provider.
+# Override the selection with SEARCH_PROVIDER=tavily|serpapi|bing
+
+# Tavily (recommended — social/web search optimised)
+# Get key: https://app.tavily.com/
+TAVILY_API_KEY="tvly-..."
+
+# SerpAPI — Google search results via API
+# Get key: https://serpapi.com/manage-api-key
+# SERPAPI_API_KEY="your-serpapi-key"
+
+# Bing Web Search API (Microsoft Azure)
+# Get key: https://portal.azure.com/ → Bing Search resource
+# BING_SEARCH_API_KEY="your-bing-key"
+
+# Optional: force a specific provider ("tavily", "serpapi", or "bing")
+# SEARCH_PROVIDER=tavily
 ```
 
 ### 4. Set Up the Database
@@ -216,6 +266,18 @@ Navigate to **Settings** in the dashboard to configure:
 
 ### OSINT API Keys
 
+#### Investigative Agent — Search Providers (at least one required)
+
+| Service | Purpose | Get Key | Env Var |
+|---------|---------|---------|---------|
+| Tavily | Social & web search (recommended) | [app.tavily.com](https://app.tavily.com/) | `TAVILY_API_KEY` |
+| SerpAPI | Google search results | [serpapi.com](https://serpapi.com/manage-api-key) | `SERPAPI_API_KEY` |
+| Bing Web Search | Microsoft Bing results | [Azure Portal](https://portal.azure.com/) | `BING_SEARCH_API_KEY` |
+
+Set `SEARCH_PROVIDER=tavily|serpapi|bing` to force a specific provider. Otherwise, the first configured provider is used automatically.
+
+#### Other OSINT Services
+
 | Service | Purpose | Get Key |
 |---------|---------|---------|
 | Hunter.io | Email verification & intelligence | [hunter.io/api](https://hunter.io/api) |
@@ -223,6 +285,7 @@ Navigate to **Settings** in the dashboard to configure:
 | VirusTotal | Malware & URL analysis | [virustotal.com](https://www.virustotal.com/gui/my-apikey) |
 | Have I Been Pwned | Data breach lookup | [haveibeenpwned.com/API/Key](https://haveibeenpwned.com/API/Key) |
 | IPInfo.io | IP geolocation | [ipinfo.io/account/token](https://ipinfo.io/account/token) |
+
 
 ---
 

@@ -69,6 +69,8 @@ export interface OsintFindings {
     url: string;
     found: boolean;
     username?: string;
+    avatarUrl?: string;
+    avatarData?: string; // base64 data URL for PDF embedding
     data?: any;
     provenance?: { sourceTarget: string; pivotDepth: number };
   }>;

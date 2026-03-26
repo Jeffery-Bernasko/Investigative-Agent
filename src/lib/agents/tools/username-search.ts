@@ -3,6 +3,7 @@
  */
 import { validateProfile } from "./platform-validator";
 import { searchWithTavily } from "./tavily-search";
+import { fetchPlatformAvatar } from "./avatar-fetcher";
 
 type ProfileResult = {
     platform: string;
@@ -10,6 +11,8 @@ type ProfileResult = {
     found: boolean;
     confidence?: "high" | "medium" | "low";
     checkedAt?: Date;
+    avatarUrl?: string;
+    avatarData?: string;
 };
 
 interface PlatformConfig {
@@ -100,6 +103,24 @@ export async function searchUsername(rawUsername: string): Promise<{
                     const found = response.ok;
                     if (found) {
                         console.log(`✅ ${platform.name}: Found (API check)`);
+                        let avatarUrl: string | undefined;
+                        let avatarData: string | undefined;
+                        try {
+                            const avatar = await fetchPlatformAvatar("github", username);
+                            if (avatar) {
+                                avatarUrl = avatar.avatarUrl;
+                                avatarData = avatar.avatarData;
+                            }
+                        } catch { /* non-fatal */ }
+                        return {
+                            platform: platform.name,
+                            url: platform.urlTemplate,
+                            found,
+                            confidence: "high" as const,
+                            checkedAt: new Date(),
+                            avatarUrl,
+                            avatarData,
+                        };
                     } else {
                         console.log(`❌ ${platform.name}: Not found (API check)`);
                     }
@@ -133,6 +154,25 @@ export async function searchUsername(rawUsername: string): Promise<{
                 console.log(
                     `✅ ${platform.name}: Found (${validation.confidence} confidence)`
                 );
+                // Fetch avatar for platforms that support it
+                let avatarUrl: string | undefined;
+                let avatarData: string | undefined;
+                try {
+                    const avatar = await fetchPlatformAvatar(platform.name, username);
+                    if (avatar) {
+                        avatarUrl = avatar.avatarUrl;
+                        avatarData = avatar.avatarData;
+                    }
+                } catch { /* non-fatal */ }
+                return {
+                    platform: platform.name,
+                    url: platform.urlTemplate,
+                    found: true,
+                    confidence: validation.confidence,
+                    checkedAt: new Date(),
+                    avatarUrl,
+                    avatarData,
+                };
             } else {
                 console.log(`❌ ${platform.name}: Not found`);
             }
@@ -310,8 +350,10 @@ export async function searchUsername(rawUsername: string): Promise<{
                     platform,
                     url: profileUrl,
                     found: true,
-                    confidence: "high",
+                    confidence: "high" as const,
                     checkedAt: new Date(),
+                    avatarUrl: undefined,
+                    avatarData: undefined,
                 });
             }
         });
@@ -388,8 +430,26 @@ export async function searchUsernameOnPlatforms(
                         },
                     );
                     const found = response.ok;
-                    if (found) console.log(`  ✅ ${platform.name}: Found (API)`);
-                    else console.log(`  ❌ ${platform.name}: Not found (API)`);
+                    if (found) {
+                        console.log(`  ✅ ${platform.name}: Found (API)`);
+                        let avatarUrl: string | undefined;
+                        let avatarData: string | undefined;
+                        try {
+                            const avatar = await fetchPlatformAvatar("github", username);
+                            if (avatar) { avatarUrl = avatar.avatarUrl; avatarData = avatar.avatarData; }
+                        } catch { /* non-fatal */ }
+                        return {
+                            platform: platform.name,
+                            url: platform.urlTemplate,
+                            found,
+                            confidence: "high" as const,
+                            checkedAt: new Date(),
+                            avatarUrl,
+                            avatarData,
+                        };
+                    } else {
+                        console.log(`  ❌ ${platform.name}: Not found (API)`);
+                    }
                     return {
                         platform: platform.name,
                         url: platform.urlTemplate,
@@ -416,6 +476,21 @@ export async function searchUsernameOnPlatforms(
 
             if (validation.exists) {
                 console.log(`  ✅ ${platform.name}: Found (${validation.confidence})`);
+                let avatarUrl: string | undefined;
+                let avatarData: string | undefined;
+                try {
+                    const avatar = await fetchPlatformAvatar(platform.name, username);
+                    if (avatar) { avatarUrl = avatar.avatarUrl; avatarData = avatar.avatarData; }
+                } catch { /* non-fatal */ }
+                return {
+                    platform: platform.name,
+                    url: platform.urlTemplate,
+                    found: true,
+                    confidence: validation.confidence,
+                    checkedAt: new Date(),
+                    avatarUrl,
+                    avatarData,
+                };
             } else {
                 console.log(`  ❌ ${platform.name}: Not found`);
             }

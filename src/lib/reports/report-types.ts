@@ -111,6 +111,8 @@ export interface ProfileResult {
     found: boolean;
     confidence?: "high" | "medium" | "low";
     username?: string;
+    avatarUrl?: string;
+    avatarData?: string; // base64 data URL for PDF embedding
     data?: any;
 }
 

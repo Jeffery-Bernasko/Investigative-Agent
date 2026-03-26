@@ -113,6 +113,8 @@ interface ProfileResult {
     found: boolean;
     confidence?: "high" | "medium" | "low";
     username?: string;
+    avatarUrl?: string;
+    avatarData?: string;
     data?: any;
 }
 
@@ -270,12 +272,7 @@ export function generateInvestigationReport(data: InvestigationData): void {
     const pageWidth = doc.internal.pageSize.getWidth();
     const contentWidth = pageWidth - 40;
 
-    // Top accent bar
-    // ==========================
     // PAGE 1 — COVER / HEADER
-    // ==========================
-
-    // Top accent bar
     doc.setFillColor(...COLORS.primary);
     doc.rect(0, 0, pageWidth, 4, "F");
 
@@ -332,9 +329,7 @@ export function generateInvestigationReport(data: InvestigationData): void {
 
     let y = 106;
 
-    // ==========================
     // SUBJECT SNAPSHOT (from deep analysis)
-    // ==========================
     if (data.deepAnalysis) {
         const da = data.deepAnalysis;
         const bp = da.behaviorProfile;
@@ -428,11 +423,7 @@ export function generateInvestigationReport(data: InvestigationData): void {
         y += 6;
     }
 
-    // let y = 112;
-
-    // ==========================
     // EXECUTIVE SUMMARY
-    // ==========================
     y = drawSectionHeader(doc, "Executive Summary", y);
 
     // Risk score badge (inline)
@@ -525,9 +516,7 @@ export function generateInvestigationReport(data: InvestigationData): void {
     });
     y += 24;
 
-    // ==========================
     // SUBJECT BEHAVIORAL PROFILE (from deep analysis)
-    // ==========================
     if (data.deepAnalysis) {
         const bp = data.deepAnalysis.behaviorProfile;
 
@@ -769,9 +758,7 @@ export function generateInvestigationReport(data: InvestigationData): void {
         y += 2;
     }
 
-    // ==========================
     // DIGITAL EXPOSURE ANALYSIS (from deep analysis)
-    // ==========================
     if (data.deepAnalysis) {
         const df = data.deepAnalysis.digitalFootprint;
 
@@ -1000,9 +987,7 @@ export function generateInvestigationReport(data: InvestigationData): void {
         y += 2;
     }
 
-    // ==========================
     // RISK ASSESSMENT & WATCHDOG ALERTS (from deep analysis)
-    // ==========================
     if (data.deepAnalysis) {
         const df = data.deepAnalysis.digitalFootprint;
         const hasRiskAreas = df.riskAreas.length > 0;
@@ -1186,9 +1171,7 @@ export function generateInvestigationReport(data: InvestigationData): void {
         }
     }
 
-    // ==========================
     // ACTIVITY TIMELINE (from deep analysis)
-    // ==========================
     if (data.deepAnalysis) {
         const timeline = data.deepAnalysis.timeline;
 
@@ -1222,10 +1205,7 @@ export function generateInvestigationReport(data: InvestigationData): void {
 
             y += 6;
 
-            // ── Timeline Table ──
-            // Cap at 25 events to prevent PDF bloat
             const displayEvents = timeline.slice(0, 25);
-
             // Format event type for display
             const formatEventType = (type: string): string => {
                 switch (type) {
@@ -1475,6 +1455,73 @@ export function generateInvestigationReport(data: InvestigationData): void {
         });
 
         y = (doc as any).lastAutoTable.finalY + 6;
+
+        // PROFILE AVATAR GALLERY
+        const profilesWithAvatars = foundProfiles.filter(p => p.avatarData);
+        if (profilesWithAvatars.length > 0) {
+            const COLS = 4;
+            const CELL_W = contentWidth / COLS;
+            const IMG_SIZE = 16;
+            const CELL_H = IMG_SIZE + 14;
+
+            y = checkPageBreak(doc, y, 10);
+            doc.setFontSize(8);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(...COLORS.primary);
+            doc.text("PROFILE AVATARS", 20, y);
+            y += 6;
+
+            profilesWithAvatars.forEach((profile, idx) => {
+                const col = idx % COLS;
+                const row = Math.floor(idx / COLS);
+
+                // Start a new row — check for page break
+                if (col === 0 && idx > 0) {
+                    y += CELL_H;
+                    y = checkPageBreak(doc, y, CELL_H);
+                } else if (col === 0) {
+                    y = checkPageBreak(doc, y, CELL_H);
+                }
+
+                const cellX = 20 + col * CELL_W;
+                const imgX = cellX + (CELL_W - IMG_SIZE) / 2;
+                const imgY = y;
+
+                // Avatar image
+                try {
+                    const imgData = profile.avatarData!;
+                    const format = imgData.startsWith("data:image/png") ? "PNG" : "JPEG";
+                    doc.addImage(imgData, format, imgX, imgY, IMG_SIZE, IMG_SIZE, undefined, "FAST");
+                } catch {
+                    // Fallback placeholder box
+                    doc.setFillColor(...COLORS.statBg);
+                    doc.rect(imgX, imgY, IMG_SIZE, IMG_SIZE, "F");
+                    doc.setDrawColor(...COLORS.border);
+                    doc.rect(imgX, imgY, IMG_SIZE, IMG_SIZE, "S");
+                }
+
+                // Platform name
+                doc.setFontSize(7);
+                doc.setFont("helvetica", "bold");
+                doc.setTextColor(...COLORS.heading);
+                doc.text(profile.platform, cellX + CELL_W / 2, imgY + IMG_SIZE + 4, { align: "center" });
+
+                // Confidence badge
+                const confColor = profile.confidence === "high"
+                    ? COLORS.green
+                    : profile.confidence === "medium"
+                        ? COLORS.yellow
+                        : COLORS.muted;
+                doc.setFontSize(6);
+                doc.setFont("helvetica", "normal");
+                doc.setTextColor(...confColor);
+                doc.text(confidenceLabel(profile.confidence), cellX + CELL_W / 2, imgY + IMG_SIZE + 9, { align: "center" });
+            });
+
+            // Advance y past the last row
+            const totalRows = Math.ceil(profilesWithAvatars.length / COLS);
+            y += totalRows * CELL_H + 4;
+        }
     }
 
     // EMAIL INTELLIGENCE
@@ -2025,9 +2072,7 @@ export function generateInvestigationReport(data: InvestigationData): void {
     const disclaimerLines = doc.splitTextToSize(disclaimer, contentWidth);
     doc.text(disclaimerLines, 20, y);
 
-    // ==========================
     // PAGE FOOTERS
-    // ==========================
     const totalPages = doc.getNumberOfPages();
     for (let i = 1; i <= totalPages; i++) {
         doc.setPage(i);

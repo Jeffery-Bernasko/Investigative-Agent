@@ -33,6 +33,14 @@ function normalizeProfiles(rawProfiles: unknown): OsintFindings["profiles"] {
                     typeof profile.username === "string"
                         ? profile.username
                         : undefined,
+                avatarUrl:
+                    typeof profile.avatarUrl === "string"
+                        ? profile.avatarUrl
+                        : undefined,
+                avatarData:
+                    typeof profile.avatarData === "string"
+                        ? profile.avatarData
+                        : undefined,
                 data: profile.data,
             };
         })

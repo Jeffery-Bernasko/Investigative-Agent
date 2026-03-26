@@ -96,7 +96,75 @@ function renderProfiles(
         },
     });
 
-    return lastTableY(doc) + 6;
+    y = lastTableY(doc) + 6;
+
+    // ── PROFILE AVATAR GALLERY ──
+    const profilesWithAvatars = foundProfiles.filter(p => p.avatarData);
+    if (profilesWithAvatars.length > 0) {
+        const COLS = 4;
+        const CELL_W = contentWidth / COLS;
+        const IMG_SIZE = 16;
+        const CELL_H = IMG_SIZE + 14;
+
+        y = checkPageBreak(doc, y, 10);
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(...COLORS.primary);
+        doc.text("PROFILE AVATARS", 20, y);
+        y += 6;
+
+        profilesWithAvatars.forEach((profile, idx) => {
+            const col = idx % COLS;
+
+            // Start a new row — check for page break
+            if (col === 0 && idx > 0) {
+                y += CELL_H;
+                y = checkPageBreak(doc, y, CELL_H);
+            } else if (col === 0) {
+                y = checkPageBreak(doc, y, CELL_H);
+            }
+
+            const cellX = 20 + col * CELL_W;
+            const imgX = cellX + (CELL_W - IMG_SIZE) / 2;
+            const imgY = y;
+
+            // Avatar image
+            try {
+                const imgData = profile.avatarData!;
+                const format = imgData.startsWith("data:image/png") ? "PNG" : "JPEG";
+                doc.addImage(imgData, format, imgX, imgY, IMG_SIZE, IMG_SIZE, undefined, "FAST");
+            } catch {
+                // Fallback placeholder box
+                doc.setFillColor(...COLORS.statBg);
+                doc.rect(imgX, imgY, IMG_SIZE, IMG_SIZE, "F");
+                doc.setDrawColor(...COLORS.border);
+                doc.rect(imgX, imgY, IMG_SIZE, IMG_SIZE, "S");
+            }
+
+            // Platform name
+            doc.setFontSize(7);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(...COLORS.heading);
+            doc.text(profile.platform, cellX + CELL_W / 2, imgY + IMG_SIZE + 4, { align: "center" });
+
+            // Confidence badge
+            const confColor = profile.confidence === "high"
+                ? COLORS.green
+                : profile.confidence === "medium"
+                    ? COLORS.yellow
+                    : COLORS.muted;
+            doc.setFontSize(6);
+            doc.setFont("helvetica", "normal");
+            doc.setTextColor(...confColor);
+            doc.text(confidenceLabel(profile.confidence), cellX + CELL_W / 2, imgY + IMG_SIZE + 9, { align: "center" });
+        });
+
+        // Advance y past the last row
+        const totalRows = Math.ceil(profilesWithAvatars.length / COLS);
+        y += totalRows * CELL_H + 4;
+    }
+
+    return y;
 }
 
 function renderEmails(doc: jsPDF, y: number, data: InvestigationData): number {

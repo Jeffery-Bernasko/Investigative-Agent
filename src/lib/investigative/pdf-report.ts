@@ -229,7 +229,10 @@ function renderProfiles(doc: jsPDF, profiles: ProfileCandidate[], y: number): nu
     // Avatar image
     if (profile.avatarData) {
       try {
-        const imgFormat = profile.avatarData.startsWith("data:image/png") ? "PNG" : "JPEG";
+        // Parse MIME type from data URL prefix (e.g. "data:image/png;base64,...")
+        const mimeMatch = profile.avatarData.match(/^data:(image\/[a-z+]+);base64,/i);
+        const mime = mimeMatch ? mimeMatch[1].toLowerCase() : "image/jpeg";
+        const imgFormat = mime === "image/png" ? "PNG" : mime === "image/webp" ? "WEBP" : "JPEG";
         doc.addImage(profile.avatarData, imgFormat, 16, y + 2, 26, 26);
         imgEndX = 46;
       } catch {

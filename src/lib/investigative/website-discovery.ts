@@ -155,18 +155,18 @@ function scoreWebsiteCandidate(
     }
   }
 
-  // 3. Name in domain
+  // 3. Name in domain — only consider the forward direction (domain contains name or its concatenation)
   const domain = extractDomain(url) || "";
   const domainClean = domain.replace(/[.-]/g, "");
   const nameNoSpaces = nameLower.replace(/\s+/g, "");
-  if (domainClean.includes(nameNoSpaces) || nameNoSpaces.includes(domainClean)) {
+  if (domainClean.includes(nameNoSpaces) && nameNoSpaces.length >= 4) {
     score += 0.2;
-    evidence.push(`Name appears in domain`);
+    evidence.push(`Full name appears in domain`);
   } else {
-    const partInDomain = nameParts.some((p) => domainClean.includes(p));
+    const partInDomain = nameParts.some((p) => p.length >= 4 && domainClean.includes(p));
     if (partInDomain) {
       score += 0.1;
-      evidence.push(`Partial name in domain`);
+      evidence.push(`Name part found in domain`);
     }
   }
 

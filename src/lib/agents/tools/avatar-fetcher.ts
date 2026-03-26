@@ -72,7 +72,14 @@ async function fetchImageAsBase64(url: string): Promise<string | null> {
             return null;
         }
 
-        // Enforce size limit
+        // Reject if Content-Length is already known to exceed the limit
+        const contentLength = response.headers.get("content-length");
+        if (contentLength && parseInt(contentLength, 10) > MAX_IMAGE_BYTES) {
+            console.warn(`[AvatarFetcher] Content-Length too large: ${contentLength}`);
+            return null;
+        }
+
+        // Enforce size limit after buffering
         const buffer = await response.arrayBuffer();
         if (buffer.byteLength > MAX_IMAGE_BYTES) {
             console.warn(`[AvatarFetcher] Image too large: ${buffer.byteLength} bytes`);

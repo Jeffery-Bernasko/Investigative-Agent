@@ -65,6 +65,7 @@ function buildSearchQueries(input: PersonInvestigationInput): string[] {
 // ── Helper: run all search queries and merge results ─────────────────────────
 
 async function runSearchQueries(
+  fullName: string,
   queries: string[],
   includeSocial: boolean,
 ): Promise<SearchResult[]> {
@@ -92,9 +93,9 @@ async function runSearchQueries(
     }
   }
 
-  // Website search (no domain filter)
+  // Website search (no domain filter) — use fullName directly
   const websiteResults = await provider.search(
-    `"${queries[0].replace(/^"([^"]+)".*/, "$1")}" personal website OR portfolio`,
+    `"${fullName}" personal website OR portfolio`,
     { maxResults: 10 },
   );
   for (const r of websiteResults) {
@@ -195,7 +196,7 @@ export async function POST(req: NextRequest) {
 
     // 1. Build search queries and run them
     const queries = buildSearchQueries(input);
-    const allResults = await runSearchQueries(queries, true);
+    const allResults = await runSearchQueries(input.fullName, queries, true);
 
     const snippets = allResults.map((r) => `${r.title} ${r.snippet}`);
 

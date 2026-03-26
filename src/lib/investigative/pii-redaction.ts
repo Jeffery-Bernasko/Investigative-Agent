@@ -80,26 +80,25 @@ export function redactSnippet(text: string): {
   const piiTypes: PiiType[] = [];
   let redacted = text;
 
-  // Redact email addresses
-  const emailRegex = /\b[\w.+-]{1,40}@[\w-]{1,30}\.[a-z]{2,6}\b/gi;
-  if (emailRegex.test(text)) {
-    piiTypes.push("email");
-    redacted = redacted.replace(
-      /\b([\w.+-]{1,40})@([\w-]{1,30}\.[a-z]{2,6})\b/gi,
-      (_, local, domain) => `${redactString(local, 1, 1)}@${domain}`,
-    );
-  }
+  // Redact email addresses (use a single replace; track match count for piiTypes)
+  let emailCount = 0;
+  redacted = redacted.replace(
+    /\b([\w.+-]{1,40})@([\w-]{1,30}\.[a-z]{2,6})\b/gi,
+    (_, local, domain) => {
+      emailCount++;
+      return `${redactString(local, 1, 1)}@${domain}`;
+    },
+  );
+  if (emailCount > 0) piiTypes.push("email");
 
   // Redact phone numbers (sequences of 7+ digits, possibly with separators)
-  const phoneRegex = /\b(\+?\d[\d\s\-().]{7,17})\b/g;
-  const phoneTest = phoneRegex.test(text);
-  if (phoneTest) {
-    piiTypes.push("phone");
-    redacted = redacted.replace(/\b(\+?\d[\d\s\-().]{7,17})\b/g, (match) => {
-      if (match.replace(/\D/g, "").length < 7) return match;
-      return redactPii(match, "phone");
-    });
-  }
+  let phoneCount = 0;
+  redacted = redacted.replace(/\b(\+?\d[\d\s\-().]{7,17})\b/g, (match) => {
+    if (match.replace(/\D/g, "").length < 7) return match;
+    phoneCount++;
+    return redactPii(match, "phone");
+  });
+  if (phoneCount > 0) piiTypes.push("phone");
 
   return { redacted, piiTypes };
 }

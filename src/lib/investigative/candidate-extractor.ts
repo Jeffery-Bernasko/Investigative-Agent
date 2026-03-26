@@ -19,7 +19,7 @@ interface PlatformPattern {
 }
 
 export const PLATFORM_PATTERNS: PlatformPattern[] = [
-  { name: "LinkedIn", profileUrlRegex: /linkedin\.com\/in\/([A-Za-z0-9_-]+)/i, hostContains: "linkedin.com" },
+  { name: "LinkedIn", profileUrlRegex: /linkedin\.com\/in\/([A-Za-z0-9_-]+)(?:\/)?$/i, hostContains: "linkedin.com" },
   { name: "GitHub", profileUrlRegex: /github\.com\/([A-Za-z0-9_-]+)(?:\/)?$/i, hostContains: "github.com" },
   { name: "X", profileUrlRegex: /(?:twitter|x)\.com\/([A-Za-z0-9_]+)(?:\/)?$/i, hostContains: ".com" },
   { name: "Instagram", profileUrlRegex: /instagram\.com\/([A-Za-z0-9_.]+)(?:\/)?$/i, hostContains: "instagram.com" },

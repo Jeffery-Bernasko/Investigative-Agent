@@ -78,6 +78,7 @@ export interface OsintFindings {
   domains: Array<{ domain: string; provenance?: { sourceTarget: string; pivotDepth: number }; data?: any }>;
   phones?: Array<{ number: string; provenance?: { sourceTarget: string; pivotDepth: number }; data?: any }>;
   webResults?: Array<{ title: string; url: string; snippet: string }>;
+  personalWebsites?: Array<{ url: string; title: string; snippet: string }>;
   contentData?: import("../tools/content-scraper").ScrapedContent[];
   metadata: Record<string, any>;
 }

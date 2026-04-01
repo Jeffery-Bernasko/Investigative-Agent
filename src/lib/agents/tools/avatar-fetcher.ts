@@ -1,8 +1,13 @@
 /**
  * Avatar fetcher — downloads profile pictures from public APIs and returns them
  * as base64 data URLs suitable for embedding in PDF reports.
- * Only platforms with freely accessible APIs are supported.
+ *
+ * Platforms with public APIs (GitHub, Reddit, Mastodon, Dev.to) use direct API
+ * calls. All other platforms fall back to a generic HTML scraper that extracts
+ * avatar images from the profile page.
  */
+
+import { scrapeAvatarFromPage } from "./avatar-scraper";
 
 export interface AvatarResult {
     avatarUrl: string;
@@ -104,16 +109,38 @@ async function fetchDevtoAvatar(username: string): Promise<AvatarResult | null> 
 
 /**
  * Fetch a profile picture for the given platform/username combination.
- * Returns null if the platform is unsupported or the request fails.
+ * Platforms with public APIs use direct calls; all others fall back to
+ * scraping the profile page HTML for avatar images.
+ *
+ * @param platform    Platform name (e.g. "GitHub", "X", "Instagram")
+ * @param username    Username on the platform
+ * @param profileUrl  Optional full URL of the profile page (enables generic scraping)
  */
 export async function fetchPlatformAvatar(
     platform: string,
     username: string,
+    profileUrl?: string,
 ): Promise<AvatarResult | null> {
     const key = platform.toLowerCase();
+
+    // Fast path: platforms with public APIs
     if (key === "github") return fetchGitHubAvatar(username);
     if (key === "reddit") return fetchRedditAvatar(username);
     if (key === "mastodon") return fetchMastodonAvatar(username);
     if (key === "dev.to") return fetchDevtoAvatar(username);
-    return null;
+
+    // Generic fallback: scrape the profile page for avatar images
+    if (!profileUrl) return null;
+
+    try {
+        const scraped = await scrapeAvatarFromPage(profileUrl, platform);
+        if (!scraped?.avatarUrl) return null;
+
+        const avatarData = await fetchImageAsBase64(scraped.avatarUrl);
+        if (!avatarData) return null;
+
+        return { avatarUrl: scraped.avatarUrl, avatarData };
+    } catch {
+        return null;
+    }
 }

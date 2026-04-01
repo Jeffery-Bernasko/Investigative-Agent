@@ -1,11 +1,30 @@
 /**
  * Platform-specific profile validation via HTML content inspection.
  */
+
+/** Platforms that cannot be validated via HTTP scraping — return immediately. */
+const UNFETCHABLE_PLATFORMS = new Set([
+    "Instagram",   // Login wall blocks non-browser requests
+    "TikTok",      // Blocks non-browser requests
+    "Pinterest",   // Anti-bot, consistently times out
+    "Snapchat",    // Requires login/app
+    "Discord",     // Requires auth or app-level access
+    "Telegram",    // Requires auth or app-level access
+    "Facebook",    // Login wall, unreliable HTML
+    "Patreon",     // Blocks scrapers
+]);
+
 export async function validateProfile(
     url: string,
     platform: string,
     username: string
 ): Promise<{ exists: boolean; confidence: "high" | "medium" | "low" }> {
+    // Fast path: skip platforms that can't be validated via HTML scraping.
+    // This avoids wasting 6s per platform on a fetch that will always fail.
+    if (UNFETCHABLE_PLATFORMS.has(platform)) {
+        return { exists: false, confidence: "low" };
+    }
+
     try {
         const response = await fetch(url, {
             method: "GET",
@@ -17,7 +36,7 @@ export async function validateProfile(
                     "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
             },
-            signal: AbortSignal.timeout(8000),
+            signal: AbortSignal.timeout(6000),
         });
 
         // If not OK, definitely doesn't exist
@@ -84,21 +103,6 @@ export async function validateProfile(
                 }
                 return { exists: false, confidence: "low" };
 
-            case "Instagram":
-                // Instagram aggressively blocks non-browser requests with login walls.
-                // Real Instagram profiles should be discovered via Tavily web search instead.
-                return { exists: false, confidence: "low" };
-
-            case "Facebook":
-                if (
-                    lowerHtml.includes("content not found") ||
-                    lowerHtml.includes("page not found") ||
-                    lowerHtml.includes("this content isn't available")
-                ) {
-                    return { exists: false, confidence: "low" };
-                }
-                return { exists: false, confidence: "low" };
-
             case "Reddit":
                 if (
                     lowerHtml.includes("page not found") ||
@@ -145,10 +149,6 @@ export async function validateProfile(
                 }
                 return { exists: false, confidence: "low" };
 
-            case "TikTok":
-                // TikTok blocks most non-browser requests, rely on Tavily for discovery
-                return { exists: false, confidence: "low" };
-
             case "Twitch":
                 if (
                     lowerHtml.includes("not found") ||
@@ -162,23 +162,6 @@ export async function validateProfile(
                     (lowerHtml.includes("followers") ||
                         lowerHtml.includes("videos") ||
                         lowerHtml.includes("streaming"))
-                ) {
-                    return { exists: true, confidence: "medium" };
-                }
-                return { exists: false, confidence: "low" };
-
-            case "Pinterest":
-                if (
-                    lowerHtml.includes("not found") ||
-                    lowerHtml.includes("404") ||
-                    !lowerHtml.includes(lowerUsername)
-                ) {
-                    return { exists: false, confidence: "low" };
-                }
-                if (
-                    lowerHtml.includes("followers") ||
-                    lowerHtml.includes("pins") ||
-                    lowerHtml.includes("boards")
                 ) {
                     return { exists: true, confidence: "medium" };
                 }
@@ -201,18 +184,6 @@ export async function validateProfile(
                 }
                 return { exists: false, confidence: "low" };
 
-            case "Snapchat":
-                if (
-                    lowerHtml.includes("not found") ||
-                    lowerHtml.includes("404")
-                ) {
-                    return { exists: false, confidence: "low" };
-                }
-                if (lowerHtml.includes("snapchat") && lowerHtml.includes(lowerUsername)) {
-                    return { exists: true, confidence: "medium" };
-                }
-                return { exists: false, confidence: "low" };
-
             case "Mastodon":
                 if (
                     lowerHtml.includes("not found") ||
@@ -228,11 +199,6 @@ export async function validateProfile(
                 ) {
                     return { exists: true, confidence: "medium" };
                 }
-                return { exists: false, confidence: "low" };
-
-            case "Discord":
-            case "Telegram":
-                // These require auth or app-level access, can't validate via HTML
                 return { exists: false, confidence: "low" };
 
             case "HackerNews":
@@ -280,3 +246,4 @@ export async function validateProfile(
         return { exists: false, confidence: "low" };
     }
 }
+

@@ -22,6 +22,9 @@ import {
 import { analyzeResults, generateRecommendations } from "./utils/analysis";
 import { scrapeProfileContent } from "./tools/content-scraper";
 import { analyzeContent, ContentAnalysis } from "./tools/analysis-tools";
+import { searchWebGeneral } from "./tools/tavily-search";
+import { extractUsernameFromUrl } from "./tools/person-search";
+import { fetchPlatformAvatar } from "./tools/avatar-fetcher";
 
 // ── Intent parsing — deterministic, no LLM needed ──────────────────────
 
@@ -68,6 +71,118 @@ function parseIntent(userInput: string): Intent {
   }
 
   return { target, targetType, intent, scope };
+}
+
+type WebSearchResult = { title: string; url: string; snippet: string };
+
+function normalizeUrl(url: string): string {
+  return url.split(/[?#]/)[0].replace(/\/+$/, "").toLowerCase();
+}
+
+function extractHostname(url: string): string | null {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function collectCollaborativeWebSeeds(findings: OsintFindings, intent: Intent) {
+  const usernames = new Set<string>();
+  const domains = new Set<string>();
+  const excludedUrls = new Set<string>();
+
+  for (const profile of findings.profiles) {
+    if (profile.url) {
+      excludedUrls.add(normalizeUrl(profile.url));
+    }
+
+    const username = profile.username || (profile.url ? extractUsernameFromUrl(profile.url) : null);
+    if (username) {
+      usernames.add(username.replace(/^@/, "").trim().toLowerCase());
+    }
+  }
+
+  for (const website of findings.personalWebsites || []) {
+    if (website.url) {
+      excludedUrls.add(normalizeUrl(website.url));
+      const hostname = extractHostname(website.url);
+      if (hostname) {
+        domains.add(hostname);
+      }
+    }
+  }
+
+  for (const entry of (findings.domains as Array<string | { domain?: string }>) || []) {
+    const domain = typeof entry === "string" ? entry : entry?.domain;
+    if (typeof domain === "string" && domain.trim()) {
+      domains.add(domain.trim().toLowerCase());
+    }
+  }
+
+  if (intent.targetType === "username") {
+    usernames.add(intent.target.replace(/^@/, "").trim().toLowerCase());
+  }
+
+  if (intent.targetType === "domain") {
+    domains.add(intent.target.trim().toLowerCase());
+  }
+
+  return {
+    usernames: Array.from(usernames).filter(Boolean),
+    domains: Array.from(domains).filter(Boolean),
+    excludedUrls,
+  };
+}
+
+function buildCollaborativeWebQueries(intent: Intent, findings: OsintFindings): {
+  queries: string[];
+  seeds: { usernames: string[]; domains: string[]; excludedUrls: Set<string> };
+} {
+  const seeds = collectCollaborativeWebSeeds(findings, intent);
+  const target = intent.target.trim();
+  const queries: string[] = [`"${target}"`];
+
+  const candidateUsernames = seeds.usernames
+    .filter((username) => username !== target.replace(/^@/, "").trim().toLowerCase())
+    .slice(0, 2);
+
+  const candidateDomains = seeds.domains
+    .filter((domain) => !target.toLowerCase().includes(domain))
+    .slice(0, 2);
+
+  for (const username of candidateUsernames) {
+    queries.push(intent.targetType === "person" ? `"${target}" "${username}"` : `"${username}"`);
+  }
+
+  for (const domain of candidateDomains) {
+    queries.push(intent.targetType === "person" ? `"${target}" "${domain}"` : `"${target}" "${domain}"`);
+  }
+
+  return {
+    queries: Array.from(new Set(queries)).slice(0, 4),
+    seeds,
+  };
+}
+
+function mergeCollaborativeWebResults(
+  resultGroups: WebSearchResult[][],
+  excludedUrls: Set<string>,
+): WebSearchResult[] {
+  const deduped = new Map<string, WebSearchResult>();
+
+  for (const result of resultGroups.flat()) {
+    const normalizedUrl = normalizeUrl(result.url);
+    if (!normalizedUrl || excludedUrls.has(normalizedUrl)) {
+      continue;
+    }
+
+    if (!deduped.has(normalizedUrl)) {
+      deduped.set(normalizedUrl, result);
+    }
+  }
+
+  return Array.from(deduped.values());
 }
 
 //  Orchestrator Agent 
@@ -147,6 +262,70 @@ export class OrchestratorAgent {
       ctx.findings = mapAgentResultToFindings(osintResult.data);
       computeFindingsStats(ctx.findings, osintResult.confidence);
       console.log(`[Orchestrator] OSINT complete: ${ctx.findings.profiles.length} profiles found`);
+
+      // 4b. Collaborative web search (use OSINT findings to guide follow-up search)
+      console.log(`[Orchestrator] Step 1b: Collaborative web search...`);
+      try {
+        const { queries, seeds } = buildCollaborativeWebQueries(intent, ctx.findings);
+        console.log(
+          `[Orchestrator] Web search seeds: ${seeds.usernames.length} username(s), ${seeds.domains.length} domain(s), ${queries.length} quer${queries.length === 1 ? "y" : "ies"}`,
+        );
+
+        ctx.findings.metadata.webSearchCollaboration = {
+          mode: "osint-seeded",
+          queries,
+          usernames: seeds.usernames,
+          domains: seeds.domains,
+          excludedUrls: seeds.excludedUrls.size,
+        };
+
+        const webResultGroups = await Promise.all(
+          queries.map((query) => searchWebGeneral(query, process.env.TAVILY_API_KEY, 6)),
+        );
+        const webResults = mergeCollaborativeWebResults(webResultGroups, seeds.excludedUrls);
+
+        if (webResults.length > 0) {
+          ctx.findings.webResults = webResults;
+          console.log(`[Orchestrator] Web search: ${webResults.length} results found`);
+        } else {
+          console.log(`[Orchestrator] Web search: no new results after deduping against OSINT findings`);
+        }
+      } catch (error) {
+        console.warn(`[Orchestrator] Web search failed (non-fatal):`, error instanceof Error ? error.message : error);
+      }
+
+      // 4c. Avatar enrichment — fetch profile pictures for profiles missing avatarData
+      //     Processes in batches of 5 to avoid overwhelming target sites.
+      console.log(`[Orchestrator] Step 1c: Enriching profiles with avatars...`);
+      try {
+        let enrichedCount = 0;
+        const profilesToEnrich = ctx.findings.profiles.filter(p => p.found && !p.avatarData);
+
+        // Process in batches of 5 for concurrency control
+        for (let i = 0; i < profilesToEnrich.length; i += 5) {
+          const batch = profilesToEnrich.slice(i, i + 5);
+          await Promise.all(
+            batch.map(async (profile) => {
+              const username = extractUsernameFromUrl(profile.url);
+              if (!username) return;
+              try {
+                const avatar = await fetchPlatformAvatar(profile.platform, username, profile.url);
+                if (avatar) {
+                  profile.avatarUrl = avatar.avatarUrl;
+                  profile.avatarData = avatar.avatarData;
+                  profile.username = profile.username || username;
+                  enrichedCount++;
+                }
+              } catch {
+                console.log(`[Orchestrator] Avatar fetch failed for ${profile.platform} (non-fatal)`);
+              }
+            }),
+          );
+        }
+        console.log(`[Orchestrator] Avatar enrichment: ${enrichedCount}/${profilesToEnrich.length} profile picture(s) downloaded`);
+      } catch (error) {
+        console.warn(`[Orchestrator] Avatar enrichment failed (non-fatal):`, error instanceof Error ? error.message : error);
+      }
 
       // 5. Content scraping (standard and deep scopes)
       if (intent.scope !== "quick") {

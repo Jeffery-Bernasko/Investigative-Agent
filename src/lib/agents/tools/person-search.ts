@@ -3,7 +3,7 @@
  */
 
 import { searchUsernameOnPlatforms, ALL_PLATFORM_NAMES } from "./username-search";
-import { searchWithTavily, DEFAULT_SOCIAL_DOMAINS } from "./tavily-search";
+import { searchWithTavily } from "./tavily-search";
 
 // Types
 export type ProfileResult = {
@@ -31,6 +31,7 @@ export interface PersonSearchResult {
     found: boolean;
     profiles: ProfileResult[];
     identityMap: IdentityMap;
+    personalWebsites: Array<{ url: string; title: string; snippet: string }>;
 }
 
 /**
@@ -197,6 +198,7 @@ export async function searchPersonByName(
 
     const discoveredProfiles: ProfileResult[] = [];
     const identityMap = new Map<string, PlatformIdentity>();
+    const personalWebsites: Array<{ url: string; title: string; snippet: string }> = [];
 
     // PHASE 1: Discover real identities (Tavily + APIs)
     console.log(`📡 Phase 1: Discovering real usernames for "${fullName}"...\n`);
@@ -228,6 +230,7 @@ export async function searchPersonByName(
             {
                 label: "Forums & other",
                 query: `"${fullName}" profile`,
+
                 domains: ["reddit.com", "medium.com", "quora.com", "pinterest.com", "mastodon.social", "t.me", "snapchat.com"],
             },
         ];
@@ -313,9 +316,94 @@ export async function searchPersonByName(
                     confidence: "high",
                     checkedAt: new Date(),
                 });
+            } else {
+                // Non-social URL — potential personal website
+                const snippetLower = (result.snippet || "").toLowerCase();
+                const titleLower = result.title.toLowerCase();
+                // Check title or snippet contain the person's name
+                const nameMatch = searchNameParts.some((part) => titleLower.includes(part) || snippetLower.includes(part));
+                if (nameMatch) {
+                    const isDupe = personalWebsites.some((w) => w.url === result.url);
+                    if (!isDupe) {
+                        console.log(`    🌐 Potential personal website: ${result.url}`);
+                        personalWebsites.push({
+                            url: result.url,
+                            title: result.title,
+                            snippet: result.snippet,
+                        });
+                    }
+                }
             }
         }
-        console.log(`    📊 Tavily discovered ${discoveredProfiles.length} profiles\n`);
+        console.log(`    📊 Tavily discovered ${discoveredProfiles.length} profiles, ${personalWebsites.length} potential website(s)\n`);
+
+        // ── 1A-Web: Open-web search for personal websites and social profiles ──
+        console.log(`  🌐 1A-Web: Searching open web for profiles and personal websites...`);
+        const webQueries = [
+            `"${fullName}" official website`,
+            `"${fullName}" portfolio site`,
+            `"${fullName}" profiles`,
+        ];
+        // Use searchWithTavily with an empty includeDomains list so no domain
+        // filter is sent — equivalent to a full open-web search.
+        const webSearchResults = await Promise.all(
+            webQueries.map((q) => searchWithTavily(q, tavilyKey, { includeDomains: [], maxResults: 5 })),
+        );
+
+        for (const result of webSearchResults.flat()) {
+            const platform = detectPlatformFromUrl(result.url);
+            const username = extractUsernameFromUrl(result.url);
+
+            if (platform !== "Other") {
+                // Social URL found in general search — apply same relevance + dedup logic
+                if (!isProfileUrl(result.url, platform)) continue;
+                const titleLower = result.title.toLowerCase();
+                const snippetLower = (result.snippet || "").toLowerCase();
+                const titleHasAllParts = searchNameParts.every((part) => titleLower.includes(part));
+                const snippetHasAllParts = searchNameParts.every((part) => snippetLower.includes(part));
+                const usernameMatches = username && isUsernameRelevant(username, fullName);
+                if (!titleHasAllParts && !snippetHasAllParts && !usernameMatches) continue;
+
+                const isDupe = discoveredProfiles.some((p) => {
+                    if (p.platform !== platform) return false;
+                    const normalizeUrl = (u: string) => u.split(/[?#]/)[0].replace(/\/+$/, "").toLowerCase();
+                    if (normalizeUrl(p.url) === normalizeUrl(result.url)) return true;
+                    if (username) {
+                        const existingUsername = extractUsernameFromUrl(p.url);
+                        if (existingUsername?.toLowerCase() === username.toLowerCase()) return true;
+                    }
+                    return false;
+                });
+                if (isDupe) continue;
+
+                console.log(`    ✅ General search found ${platform}: ${result.url}`);
+                if (username && !identityMap.has(platform)) {
+                    identityMap.set(platform, { username: username.toLowerCase(), confidence: "medium", source: "tavily" });
+                }
+                discoveredProfiles.push({ platform, url: result.url, found: true, confidence: "medium", checkedAt: new Date() });
+                continue;
+            }
+
+            // "Other" = potential personal website
+            const titleLower = result.title.toLowerCase();
+            const snippetLower = (result.snippet || "").toLowerCase();
+            const namePartsLocal = fullName.toLowerCase().split(/\s+/).filter((p) => p.length >= 2);
+            const nameMatch = namePartsLocal.some(
+                (part) => titleLower.includes(part) || snippetLower.includes(part),
+            );
+            if (!nameMatch) continue;
+
+            const isDupe = personalWebsites.some((w) => w.url === result.url);
+            if (!isDupe) {
+                console.log(`    🌐 Personal website found: ${result.url}`);
+                personalWebsites.push({
+                    url: result.url,
+                    title: result.title,
+                    snippet: result.snippet,
+                });
+            }
+        }
+        console.log(`    📊 After open-web search: ${discoveredProfiles.length} profiles, ${personalWebsites.length} website(s)\n`);
     } else {
         console.log(`  ⚠️ 1A: Tavily API key not set, skipping\n`);
     }
@@ -500,5 +588,6 @@ export async function searchPersonByName(
         found: finalProfiles.length > 0,
         profiles: finalProfiles,
         identityMap: serializedIdentityMap,
+        personalWebsites,
     };
 }

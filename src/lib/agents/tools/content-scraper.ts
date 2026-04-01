@@ -293,8 +293,11 @@ async function fetchWithTavilyExtract(
     try {
         const res = await fetch("https://api.tavily.com/extract", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ api_key: apiKey, urls: [url] }),
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({ urls: [url] }),
             signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
 

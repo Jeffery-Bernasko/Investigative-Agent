@@ -1,4 +1,4 @@
-import { OllamaClient } from "@/lib/ai/ollama-adapter";
+import { LLMClient } from "@/lib/ai/provider-resolver";
 import { Intent, OsintFindings } from "../types";
 import type { ContentAnalysis } from "../tools/analysis-tools";
 
@@ -8,7 +8,7 @@ import type { ContentAnalysis } from "../tools/analysis-tools";
  * turning structured data into readable prose.
  */
 export async function generateSummary(
-    llm: OllamaClient,
+    llm: LLMClient,
     findings: OsintFindings,
     intent: Intent,
     riskScore: number,

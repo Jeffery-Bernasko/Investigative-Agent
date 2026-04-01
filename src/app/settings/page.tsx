@@ -33,6 +33,11 @@ interface SettingsFormData {
   // OpenAI Direct (fallback)
   openaiApiKey: string;
 
+  // Ollama (local)
+  ollamaBaseUrl: string;
+  ollamaModel: string;
+  ollamaEmbeddingModel: string;
+
   // OSINT APIs
   hunterApiKey: string;
   shodanApiKey: string;
@@ -55,6 +60,9 @@ const defaultSettings: SettingsFormData = {
   azureEmbeddingDeployment: "",
   azureApiVersion: "2024-02-15-preview",
   openaiApiKey: "",
+  ollamaBaseUrl: "",
+  ollamaModel: "",
+  ollamaEmbeddingModel: "",
   hunterApiKey: "",
   shodanApiKey: "",
   virusTotalApiKey: "",
@@ -397,6 +405,67 @@ export default function SettingsPage() {
                         <Eye className="w-4 h-4" />
                       )}
                     </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Ollama (Local AI) */}
+              <div className="p-6 rounded-2xl bg-white/5 border border-white/10">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="p-2 rounded-lg bg-purple-500/20">
+                    <Server className="w-5 h-5 text-purple-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-white">
+                      Ollama (Local AI)
+                    </h2>
+                    <p className="text-sm text-gray-400">
+                      Run AI models locally — no API key required
+                    </p>
+                  </div>
+                  {settings.ollamaBaseUrl && (
+                    <span className="ml-auto flex items-center gap-1 text-sm text-green-400">
+                      <CheckCircle2 className="w-4 h-4" /> Configured
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Base URL
+                    </label>
+                    <input
+                      type="text"
+                      value={settings.ollamaBaseUrl}
+                      onChange={(e) => updateSetting("ollamaBaseUrl", e.target.value)}
+                      placeholder="http://localhost:11434"
+                      className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder:text-gray-500 focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all font-mono text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Chat Model
+                    </label>
+                    <input
+                      type="text"
+                      value={settings.ollamaModel}
+                      onChange={(e) => updateSetting("ollamaModel", e.target.value)}
+                      placeholder="mistral"
+                      className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder:text-gray-500 focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all font-mono text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Embedding Model
+                    </label>
+                    <input
+                      type="text"
+                      value={settings.ollamaEmbeddingModel}
+                      onChange={(e) => updateSetting("ollamaEmbeddingModel", e.target.value)}
+                      placeholder="nomic-embed-text"
+                      className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder:text-gray-500 focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all font-mono text-sm"
+                    />
                   </div>
                 </div>
               </div>

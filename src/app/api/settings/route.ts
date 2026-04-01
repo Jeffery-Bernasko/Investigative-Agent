@@ -4,19 +4,15 @@ import { userSettings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 
-// Helper to get user ID from session
-async function getUserId(): Promise<string | null> {
-  const session = await auth();
-  return session?.user?.id || null;
-}
-
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const userId = await getUserId();
-    
-    if (!userId) {
+    const session = await auth.api.getSession({ headers: request.headers });
+
+    if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const userId = session.user.id;
 
     const settings = await db
       .select()
@@ -36,6 +32,9 @@ export async function GET() {
       azureDeploymentName: result.azureDeploymentName || "",
       azureApiVersion: result.azureApiVersion || "2024-02-15-preview",
       openaiApiKey: result.openaiApiKey ? "••••••••" + result.openaiApiKey.slice(-4) : "",
+      ollamaBaseUrl: result.ollamaBaseUrl || "",
+      ollamaModel: result.ollamaModel || "",
+      ollamaEmbeddingModel: result.ollamaEmbeddingModel || "",
       hunterApiKey: result.hunterApiKey ? "••••••••" + result.hunterApiKey.slice(-4) : "",
       shodanApiKey: result.shodanApiKey ? "••••••••" + result.shodanApiKey.slice(-4) : "",
       virusTotalApiKey: result.virusTotalApiKey ? "••••••••" + result.virusTotalApiKey.slice(-4) : "",
@@ -44,9 +43,10 @@ export async function GET() {
       defaultAiModel: result.defaultAiModel || "gpt-4",
       darkMode: result.darkMode ?? true,
       notifications: result.notifications ?? true,
-      // Indicate which keys are configured
+      // Indicate which providers/keys are configured
       hasAzure: !!result.azureApiKey,
       hasOpenAI: !!result.openaiApiKey,
+      hasOllama: !!result.ollamaBaseUrl,
       hasHunter: !!result.hunterApiKey,
       hasShodan: !!result.shodanApiKey,
       hasVirusTotal: !!result.virusTotalApiKey,
@@ -61,11 +61,13 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const userId = await getUserId();
-    
-    if (!userId) {
+    const session = await auth.api.getSession({ headers: request.headers });
+
+    if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const userId = session.user.id;
 
     const body = await request.json();
 
@@ -81,58 +83,27 @@ export async function POST(request: NextRequest) {
     };
 
     // Only update fields that are provided and not masked
-    if (body.azureEndpoint !== undefined) {
-      updateData.azureEndpoint = body.azureEndpoint;
-    }
-    if (body.azureApiKey && !body.azureApiKey.startsWith("••••")) {
-      updateData.azureApiKey = body.azureApiKey;
-    }
-    if (body.azureDeploymentName !== undefined) {
-      updateData.azureDeploymentName = body.azureDeploymentName;
-    }
-    if (body.azureApiVersion !== undefined) {
-      updateData.azureApiVersion = body.azureApiVersion;
-    }
-    if (body.openaiApiKey && !body.openaiApiKey.startsWith("••••")) {
-      updateData.openaiApiKey = body.openaiApiKey;
-    }
-    if (body.hunterApiKey && !body.hunterApiKey.startsWith("••••")) {
-      updateData.hunterApiKey = body.hunterApiKey;
-    }
-    if (body.shodanApiKey && !body.shodanApiKey.startsWith("••••")) {
-      updateData.shodanApiKey = body.shodanApiKey;
-    }
-    if (body.virusTotalApiKey && !body.virusTotalApiKey.startsWith("••••")) {
-      updateData.virusTotalApiKey = body.virusTotalApiKey;
-    }
-    if (body.hibpApiKey && !body.hibpApiKey.startsWith("••••")) {
-      updateData.hibpApiKey = body.hibpApiKey;
-    }
-    if (body.ipinfoToken && !body.ipinfoToken.startsWith("••••")) {
-      updateData.ipinfoToken = body.ipinfoToken;
-    }
-    if (body.defaultAiModel !== undefined) {
-      updateData.defaultAiModel = body.defaultAiModel;
-    }
-    if (body.darkMode !== undefined) {
-      updateData.darkMode = body.darkMode;
-    }
-    if (body.notifications !== undefined) {
-      updateData.notifications = body.notifications;
-    }
+    if (body.azureEndpoint !== undefined) updateData.azureEndpoint = body.azureEndpoint;
+    if (body.azureApiKey && !body.azureApiKey.startsWith("••••")) updateData.azureApiKey = body.azureApiKey;
+    if (body.azureDeploymentName !== undefined) updateData.azureDeploymentName = body.azureDeploymentName;
+    if (body.azureApiVersion !== undefined) updateData.azureApiVersion = body.azureApiVersion;
+    if (body.openaiApiKey && !body.openaiApiKey.startsWith("••••")) updateData.openaiApiKey = body.openaiApiKey;
+    if (body.ollamaBaseUrl !== undefined) updateData.ollamaBaseUrl = body.ollamaBaseUrl;
+    if (body.ollamaModel !== undefined) updateData.ollamaModel = body.ollamaModel;
+    if (body.ollamaEmbeddingModel !== undefined) updateData.ollamaEmbeddingModel = body.ollamaEmbeddingModel;
+    if (body.hunterApiKey && !body.hunterApiKey.startsWith("••••")) updateData.hunterApiKey = body.hunterApiKey;
+    if (body.shodanApiKey && !body.shodanApiKey.startsWith("••••")) updateData.shodanApiKey = body.shodanApiKey;
+    if (body.virusTotalApiKey && !body.virusTotalApiKey.startsWith("••••")) updateData.virusTotalApiKey = body.virusTotalApiKey;
+    if (body.hibpApiKey && !body.hibpApiKey.startsWith("••••")) updateData.hibpApiKey = body.hibpApiKey;
+    if (body.ipinfoToken && !body.ipinfoToken.startsWith("••••")) updateData.ipinfoToken = body.ipinfoToken;
+    if (body.defaultAiModel !== undefined) updateData.defaultAiModel = body.defaultAiModel;
+    if (body.darkMode !== undefined) updateData.darkMode = body.darkMode;
+    if (body.notifications !== undefined) updateData.notifications = body.notifications;
 
     if (existing.length === 0) {
-      // Create new settings
-      await db.insert(userSettings).values({
-        userId,
-        ...updateData,
-      });
+      await db.insert(userSettings).values({ userId, ...updateData });
     } else {
-      // Update existing settings
-      await db
-        .update(userSettings)
-        .set(updateData)
-        .where(eq(userSettings.userId, userId));
+      await db.update(userSettings).set(updateData).where(eq(userSettings.userId, userId));
     }
 
     return NextResponse.json({ success: true });

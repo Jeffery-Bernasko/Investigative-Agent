@@ -1,4 +1,4 @@
-import { OllamaClient } from "@/lib/ai/ollama-adapter";
+import { LLMClient } from "@/lib/ai/provider-resolver";
 import { Intent, OsintFindings } from "../types";
 import {
     calculateRiskScore,
@@ -11,7 +11,7 @@ import { generateSummary } from "./llm-helpers";
  * Run the full analysis pipeline: risk score → summary → insights.
  */
 export async function analyzeResults(
-    llm: OllamaClient,
+    llm: LLMClient,
     findings: OsintFindings,
     intent: Intent,
     contentAnalysis?: ContentAnalysis,

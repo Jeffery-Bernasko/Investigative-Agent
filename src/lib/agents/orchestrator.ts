@@ -1,4 +1,4 @@
-import { createOllamaClient, OllamaClient } from "@/lib/ai/ollama-adapter";
+import { resolveProvider, LLMClient } from "@/lib/ai/provider-resolver";
 import { db } from "@/lib/db";
 import {
   ExecutionContext,
@@ -187,36 +187,6 @@ function mergeCollaborativeWebResults(
 
 //  Orchestrator Agent 
 export class OrchestratorAgent {
-  private llm: OllamaClient;
-  private osintAgent: OsintAgent;
-  private relationshipAgent: RelationshipAgent;
-  private analysisAgent: AnalysisAgent;
-
-  constructor() {
-    this.llm = createOllamaClient({
-      baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
-      model: process.env.OLLAMA_MODEL || "mistral",
-    });
-
-    this.osintAgent = new OsintAgent({
-      name: "OSINT Agent",
-      llm: this.llm,
-      db: db,
-    });
-
-    this.relationshipAgent = new RelationshipAgent({
-      name: "Relationship Agent",
-      llm: this.llm,
-      db: db,
-    });
-
-    this.analysisAgent = new AnalysisAgent({
-      name: "Analysis Agent",
-      llm: this.llm,
-      db: db,
-    });
-  }
-
   async investigate(
     userInput: string,
     userId: string
@@ -226,13 +196,23 @@ export class OrchestratorAgent {
 
     console.log(`\n[Orchestrator] Starting investigation: "${userInput}" (${investigationId})`);
 
+    // Resolve provider from user settings (falls back to env vars for Ollama)
+    const llm: LLMClient = await resolveProvider(userId);
+
+    // Per-investigation agent instances using the resolved provider
+    const osintAgent = new OsintAgent({ name: "OSINT Agent", llm, db });
+    const relationshipAgent = new RelationshipAgent({ name: "Relationship Agent", llm, db });
+    const analysisAgent = new AnalysisAgent({ name: "Analysis Agent", llm, db });
+
     try {
       // 1. Parse intent (deterministic — no LLM call)
       const intent = parseIntent(userInput);
       console.log(`[Orchestrator] Intent: target=${intent.target}, type=${intent.targetType}, scope=${intent.scope}`);
 
-      // 2. Warmup LLM
-      await this.llm.warmup();
+      // 2. Warmup LLM (only supported by OllamaClient)
+      if ("warmup" in llm && typeof (llm as { warmup: unknown }).warmup === "function") {
+        await (llm as { warmup(): Promise<void> }).warmup();
+      }
 
       // 3. Prepare entity
       const entity = await this.prepareEntity(intent, userId);
@@ -247,7 +227,7 @@ export class OrchestratorAgent {
 
       // 4. OSINT gathering (always runs)
       console.log(`[Orchestrator] Step 1: OSINT gathering...`);
-      const osintResult = await this.osintAgent.execute({
+      const osintResult = await osintAgent.execute({
         entityId: entity.id.toString(),
         description: `Gather comprehensive OSINT on ${intent.targetType}`,
         target: intent.target,
@@ -353,7 +333,7 @@ export class OrchestratorAgent {
 
       // 7. Risk analysis + recommendations (always runs)
       console.log(`[Orchestrator] Step 3: Risk analysis...`);
-      ctx.analysis = await analyzeResults(this.llm, ctx.findings, intent, contentAnalysis);
+      ctx.analysis = await analyzeResults(llm, ctx.findings, intent, contentAnalysis);
       ctx.recommendations = generateRecommendations(ctx.findings, ctx.analysis.riskScore);
       console.log(`[Orchestrator] Risk score: ${ctx.analysis.riskScore}/10, ${ctx.recommendations.length} recommendations`);
 
@@ -368,7 +348,7 @@ export class OrchestratorAgent {
         });
 
         console.log(`[Orchestrator] Step 5: Discovering relationships...`);
-        const relResult = await this.relationshipAgent.execute({
+        const relResult = await relationshipAgent.execute({
           entityId: entity.id.toString(),
           description: "Discover and map relationships",
           target: entity.name,
@@ -387,7 +367,7 @@ export class OrchestratorAgent {
       // 8. Deep analysis (deep scope only, skip if in-memory entity)
       if (intent.scope === "deep" && entity.id !== -1) {
         console.log(`[Orchestrator] Step 6: Deep behavioral analysis...`);
-        const analysisResult = await this.analysisAgent.execute({
+        const analysisResult = await analysisAgent.execute({
           entityId: entity.id.toString(),
           description: "Deep behavioral analysis and digital footprint monitoring",
           target: entity.name,

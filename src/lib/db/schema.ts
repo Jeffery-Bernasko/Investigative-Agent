@@ -2,10 +2,7 @@ import { pgTable, text, timestamp, serial, pgEnum, uniqueIndex, jsonb, boolean, 
 import { customType } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
-// ============================================
 // Custom Types
-// ============================================
-
 // Define the vector type for pgvector (1536 dimensions for OpenAI embeddings)
 export const vector = customType<{ data: number[]; driverData: string }>({
   dataType() {
@@ -19,10 +16,7 @@ export const vector = customType<{ data: number[]; driverData: string }>({
   },
 });
 
-// ============================================
 // Enums
-// ============================================
-
 export const entityTypeEnum = pgEnum('entity_type', [
   'person',
   'organization',
@@ -74,10 +68,7 @@ export const jobStatusEnum = pgEnum('job_status', [
   'failed',
 ]);
 
-// ============================================
 // User & Authentication Tables (Better Auth Compatible)
-// ============================================
-
 export const users = pgTable('users', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   name: text('name').notNull(),
@@ -126,10 +117,7 @@ export const verifications = pgTable('verifications', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-// ============================================
 // User Settings (API Keys, Preferences)
-// ============================================
-
 export const userSettings = pgTable('user_settings', {
   id: serial('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }).unique(),
@@ -146,6 +134,7 @@ export const userSettings = pgTable('user_settings', {
   //Ollama Settings
   ollamaBaseUrl: text('ollama_base_url'),
   ollamaModel: text('ollama_model'),
+  ollamaEmbeddingModel: text('ollama_embedding_model'),
 
   // OSINT API Keys
   hunterApiKey: text('hunter_api_key'),
@@ -165,10 +154,7 @@ export const userSettings = pgTable('user_settings', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-// ============================================
 // Intelligence Entities
-// ============================================
-
 export const entities = pgTable('entities', {
   id: serial('id').primaryKey(),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -233,10 +219,7 @@ export const entities = pgTable('entities', {
   userIdIdx: index('entities_user_id_idx').on(table.userId),
 }));
 
-// ============================================
 // Entity Relationships
-// ============================================
-
 export const entityRelations = pgTable('entity_relations', {
   id: serial('id').primaryKey(),
   sourceEntityId: integer('source_entity_id').notNull().references(() => entities.id, { onDelete: 'cascade' }),
@@ -250,10 +233,7 @@ export const entityRelations = pgTable('entity_relations', {
   targetIdx: index('relations_target_idx').on(table.targetEntityId),
 }));
 
-// ============================================
 // Intelligence Reports
-// ============================================
-
 export const reports = pgTable('reports', {
   id: serial('id').primaryKey(),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -291,10 +271,7 @@ export const reports = pgTable('reports', {
   userIdIdx: index('reports_user_id_idx').on(table.userId),
 }));
 
-// ============================================
 // Vector Embeddings for Semantic Search
-// ============================================
-
 export const vectors = pgTable('vectors', {
   id: serial('id').primaryKey(),
 
@@ -317,10 +294,8 @@ export const vectors = pgTable('vectors', {
   reportIdIdx: index('vectors_report_id_idx').on(table.reportId),
 }));
 
-// ============================================
-// Tracking Links
-// ============================================
 
+// Tracking Links
 export const trackingLinks = pgTable('tracking_links', {
   id: serial('id').primaryKey(),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -346,10 +321,7 @@ export const trackingLinks = pgTable('tracking_links', {
   userIdIdx: index('tracking_links_user_id_idx').on(table.userId),
 }));
 
-// ============================================
 // Tracking Data (Collected from link clicks)
-// ============================================
-
 export const trackingData = pgTable('tracking_data', {
   id: serial('id').primaryKey(),
   trackingLinkId: integer('tracking_link_id').notNull().references(() => trackingLinks.id, { onDelete: 'cascade' }),
@@ -391,10 +363,7 @@ export const trackingData = pgTable('tracking_data', {
   ipIdx: index('tracking_data_ip_idx').on(table.ipAddress),
 }));
 
-// ============================================
 // OSINT Search History
-// ============================================
-
 export const osintSearches = pgTable('osint_searches', {
   id: serial('id').primaryKey(),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -425,10 +394,7 @@ export const osintSearches = pgTable('osint_searches', {
   queryIdx: index('osint_searches_query_idx').on(table.query),
 }));
 
-// ============================================
 // Background Job Queue (for Web Scraping)
-// ============================================
-
 export const jobQueue = pgTable('job_queue', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -500,10 +466,7 @@ export const jobQueue = pgTable('job_queue', {
   createdAtIdx: index('job_queue_created_at_idx').on(table.createdAt),
 }));
 
-// ============================================
 // Activity Log
-// ============================================
-
 export const activityLogs = pgTable('activity_logs', {
   id: serial('id').primaryKey(),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -524,10 +487,7 @@ export const activityLogs = pgTable('activity_logs', {
   createdAtIdx: index('activity_logs_created_at_idx').on(table.createdAt),
 }));
 
-// ============================================
 // Relations (Drizzle ORM)
-// ============================================
-
 export const usersRelations = relations(users, ({ many, one }) => ({
   sessions: many(sessions),
   accounts: many(accounts),

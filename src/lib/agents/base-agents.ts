@@ -1,15 +1,15 @@
-import { OllamaClient } from "@/lib/ai/ollama-adapter";
+import { LLMClient } from "@/lib/ai/provider-resolver";
 import { Task, AgentResult } from "./types";
 
 export interface AgentConfig {
     name: string;
-    llm: OllamaClient;
+    llm: LLMClient;
     db: any; // DrizzleDB type
 }
 
 export abstract class BaseAgent {
     protected name: string;
-    protected llm: OllamaClient;
+    protected llm: LLMClient;
     protected db: any;
 
     constructor(config: AgentConfig) {

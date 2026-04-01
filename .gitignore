@@ -43,3 +43,7 @@ next-env.d.ts
 # Drizzle
 drizzle/*.sql
 
+
+#Claude MD
+.claude-md
+CLAUDE.md

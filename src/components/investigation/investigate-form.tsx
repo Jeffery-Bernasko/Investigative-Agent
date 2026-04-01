@@ -47,8 +47,38 @@ interface InvestigationResult {
     summary: string;
   };
   recommendations: string[];
+  relationships?: Array<{
+    targetEntity: { name: string; type: string };
+    relationshipType: string;
+    strength: number;
+    context: string;
+    evidence: { sources: string[]; mentions: number };
+  }>;
+  networkAnalysis?: {
+    totalConnections: number;
+    strongConnections: number;
+    influenceScore: number;
+    topConnections: Array<{ name: string; strength: number; type: string }>;
+  };
+  deepAnalysis?: {
+    insights?: Array<{ category: string; priority: string; insight: string; evidence: string[]; recommendation: string; impact: string } | string>;
+    summary?: string;
+    patterns?: string[];
+    riskFactors?: string[];
+  };
   duration: number;
   createdAt: string;
+}
+
+type InvestigationScope = "quick" | "standard" | "deep";
+
+interface TraceStep {
+  phase: string;
+  status: "completed" | "failed" | "skipped";
+  startedAt: string;
+  completedAt: string;
+  summary?: string;
+  error?: string;
 }
 
 // Confidence badge component
@@ -113,8 +143,10 @@ function RiskScoreGauge({ score }: { score: number }) {
 
 export function InvestigateForm() {
   const [query, setQuery] = useState("");
+  const [scope, setScope] = useState<InvestigationScope>("standard");
   const [isInvestigating, setIsInvestigating] = useState(false);
   const [result, setResult] = useState<InvestigationResult | null>(null);
+  const [traceSteps, setTraceSteps] = useState<TraceStep[]>([]);
   const [progress, setProgress] = useState<string>("");
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
@@ -142,16 +174,17 @@ export function InvestigateForm() {
 
     setIsInvestigating(true);
     setResult(null);
+    setTraceSteps([]);
     setProgress("Initializing investigation...");
 
     try {
-      console.log(`🔍 Starting investigation: "${query}"`);
+      console.log(`🔍 Starting investigation: "${query}" (scope: ${scope})`);
       setProgress("🧠 AI is analyzing your request...");
 
       const response = await fetch("/api/investigate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: query.trim() }),
+        body: JSON.stringify({ query: query.trim(), scope }),
       });
 
       if (!response.ok) {
@@ -169,6 +202,17 @@ export function InvestigateForm() {
         toast.success("Investigation complete!", {
           description: `Found ${data.investigation.findings.profiles.length} profiles in ${data.investigation.duration}s`,
         });
+
+        // Fetch trace steps non-blocking
+        try {
+          const traceRes = await fetch(`/api/investigate/${data.investigation.investigationId}`);
+          if (traceRes.ok) {
+            const trace = await traceRes.json();
+            if (Array.isArray(trace.steps)) setTraceSteps(trace.steps);
+          }
+        } catch {
+          // trace fetch failure is non-fatal
+        }
       } else {
         throw new Error("Invalid response format");
       }
@@ -230,6 +274,33 @@ export function InvestigateForm() {
               disabled={isInvestigating}
               className="w-full pl-12 pr-4 py-4 bg-black/40 border border-white/10 rounded-xl text-white placeholder:text-gray-500 focus:border-primary/50 focus:ring-2 focus:ring-primary/20 transition-all disabled:opacity-50"
             />
+          </div>
+
+          {/* Scope selector */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 shrink-0">Scope:</span>
+            {(["quick", "standard", "deep"] as InvestigationScope[]).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setScope(s)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all capitalize ${
+                  scope === s
+                    ? "bg-primary/20 border-primary/50 text-primary"
+                    : "bg-white/5 border-white/10 text-gray-400 hover:border-white/20"
+                }`}
+              >
+                {s === "quick" && "⚡ "}
+                {s === "standard" && "🔍 "}
+                {s === "deep" && "🧠 "}
+                {s}
+              </button>
+            ))}
+            <span className="text-xs text-gray-600 ml-1">
+              {scope === "quick" && "— OSINT only, fastest"}
+              {scope === "standard" && "— + content scrape & relationships"}
+              {scope === "deep" && "— + behavioral analysis (slowest)"}
+            </span>
           </div>
 
           <button
@@ -425,6 +496,111 @@ export function InvestigateForm() {
                   ))}
                 </ul>
               </div>
+            )}
+
+            {/* Relationships */}
+            {result.relationships && result.relationships.length > 0 && (
+              <div className="p-6 rounded-2xl bg-white/5 border border-white/10">
+                <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                  <Network className="w-5 h-5 text-cyan-400" />
+                  Relationships ({result.relationships.length})
+                  {result.networkAnalysis && (
+                    <span className="ml-auto text-xs text-gray-500 font-normal">
+                      Influence score: <span className="text-cyan-400 font-semibold">{result.networkAnalysis.influenceScore}</span>
+                    </span>
+                  )}
+                </h3>
+                <div className="space-y-2">
+                  {result.relationships.slice(0, 8).map((rel, i) => (
+                    <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-black/20 border border-white/5">
+                      <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: rel.strength >= 70 ? "#22d3ee" : rel.strength >= 40 ? "#facc15" : "#6b7280" }} />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-white text-sm font-medium">{rel.targetEntity.name}</span>
+                        <span className="text-gray-500 text-xs ml-2">{rel.targetEntity.type}</span>
+                      </div>
+                      <span className="text-xs text-gray-400 shrink-0">{rel.relationshipType}</span>
+                      <span className="text-xs font-mono text-cyan-500 shrink-0">{rel.strength}</span>
+                    </div>
+                  ))}
+                  {result.relationships.length > 8 && (
+                    <p className="text-xs text-gray-500 text-center pt-1">+{result.relationships.length - 8} more connections</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Deep Analysis */}
+            {result.deepAnalysis && (result.deepAnalysis.summary || (result.deepAnalysis.insights?.length ?? 0) > 0) && (
+              <div className="p-6 rounded-2xl bg-white/5 border border-white/10">
+                <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                  <Brain className="w-5 h-5 text-violet-400" />
+                  Deep Behavioral Analysis
+                </h3>
+                {result.deepAnalysis.summary && (
+                  <p className="text-gray-300 text-sm mb-4">{result.deepAnalysis.summary}</p>
+                )}
+                {result.deepAnalysis.insights && result.deepAnalysis.insights.length > 0 && (
+                  <ul className="space-y-3">
+                    {result.deepAnalysis.insights.map((insight, i) => {
+                      if (typeof insight === "string") {
+                        return (
+                          <li key={i} className="flex items-start gap-2 text-gray-300 text-sm">
+                            <span className="text-violet-400 mt-1">→</span>
+                            <span>{insight}</span>
+                          </li>
+                        );
+                      }
+                      const priorityColor = insight.priority === "critical" ? "text-red-400 border-red-500/30 bg-red-500/10" : insight.priority === "high" ? "text-orange-400 border-orange-500/30 bg-orange-500/10" : "text-yellow-400 border-yellow-500/30 bg-yellow-500/10";
+                      return (
+                        <li key={i} className="p-3 rounded-lg bg-black/20 border border-white/5 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs px-2 py-0.5 rounded border font-medium ${priorityColor}`}>{insight.priority}</span>
+                            <span className="text-xs text-gray-500 capitalize">{insight.category}</span>
+                          </div>
+                          <p className="text-sm text-gray-200">{insight.insight}</p>
+                          <p className="text-xs text-gray-400"><span className="text-violet-400">Rec:</span> {insight.recommendation}</p>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                {result.deepAnalysis.riskFactors && result.deepAnalysis.riskFactors.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-white/10">
+                    <p className="text-xs text-gray-500 mb-2">Risk factors</p>
+                    <div className="flex flex-wrap gap-2">
+                      {result.deepAnalysis.riskFactors.map((f, i) => (
+                        <span key={i} className="text-xs px-2 py-1 rounded bg-red-500/10 border border-red-500/20 text-red-300">{f}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Investigation Trace */}
+            {traceSteps.length > 0 && (
+              <details className="p-6 rounded-2xl bg-white/5 border border-white/10">
+                <summary className="cursor-pointer text-sm font-semibold text-gray-400 flex items-center gap-2">
+                  <Zap className="w-4 h-4" />
+                  Investigation Pipeline ({traceSteps.length} phases)
+                </summary>
+                <div className="mt-4 space-y-2">
+                  {traceSteps.map((step, i) => {
+                    const ms = step.completedAt && step.startedAt
+                      ? new Date(step.completedAt).getTime() - new Date(step.startedAt).getTime()
+                      : null;
+                    return (
+                      <div key={i} className="flex items-center gap-3 text-xs">
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${step.status === "completed" ? "bg-green-400" : step.status === "failed" ? "bg-red-400" : "bg-gray-600"}`} />
+                        <span className="text-gray-300 font-mono w-32 shrink-0">{step.phase}</span>
+                        <span className={`w-16 shrink-0 ${step.status === "completed" ? "text-green-400" : step.status === "failed" ? "text-red-400" : "text-gray-500"}`}>{step.status}</span>
+                        <span className="text-gray-500 flex-1 truncate">{step.summary || step.error || ""}</span>
+                        {ms !== null && <span className="text-gray-600 shrink-0">{ms}ms</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
             )}
 
             {/* Metadata */}

@@ -13,11 +13,19 @@ export async function POST(req: NextRequest) {
     }
 
     // Parse request
-    const { query } = await req.json();
+    const { query, scope, asyncEnrichment } = await req.json();
 
     if (!query || typeof query !== "string") {
       return NextResponse.json(
         { error: "Query string required" },
+        { status: 400 }
+      );
+    }
+
+    const validScopes = ["quick", "standard", "deep"] as const;
+    if (scope !== undefined && !validScopes.includes(scope)) {
+      return NextResponse.json(
+        { error: "scope must be one of: quick, standard, deep" },
         { status: 400 }
       );
     }
@@ -27,7 +35,7 @@ export async function POST(req: NextRequest) {
 
     // Run autonomous investigation
     console.log(`\n Starting autonomous investigation for user ${session.user.id}`);
-    const result = await orchestrator.investigate(query, session.user.id);
+    const result = await orchestrator.investigate(query, session.user.id, { scope, asyncEnrichment });
 
     return NextResponse.json({
       success: true,

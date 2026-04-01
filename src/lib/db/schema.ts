@@ -599,4 +599,6 @@ export type JobQueue = typeof jobQueue.$inferSelect;
 export type NewJobQueue = typeof jobQueue.$inferInsert;
 export type Relationship = typeof relationships.$inferSelect;
 export type NewRelationship = typeof relationships.$inferInsert;
+export type InvestigationTrace = typeof investigationTraces.$inferSelect;
+export type NewInvestigationTrace = typeof investigationTraces.$inferInsert;
 

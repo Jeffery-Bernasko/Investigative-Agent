@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { entities, entityRelations, vectors, NewEntity } from "@/lib/db/schema";
+import { upsertCanonicalRelationship } from "@/lib/agents/tools/relationship-repository";
 import { eq, ilike, or, desc, asc, sql, and, inArray } from "drizzle-orm";
 
 export async function GET(request: NextRequest) {
@@ -141,6 +142,15 @@ export async function POST(request: NextRequest) {
 
       if (relationshipData.length > 0) {
         await db.insert(entityRelations).values(relationshipData);
+        // Dual-write to canonical relationships table
+        for (const rel of relationshipData) {
+          await upsertCanonicalRelationship({
+            sourceEntityId: rel.sourceEntityId,
+            targetEntityId: rel.targetEntityId,
+            type: rel.relationType,
+            strength: rel.strength,
+          });
+        }
       }
     }
 

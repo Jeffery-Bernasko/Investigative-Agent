@@ -5,7 +5,10 @@ import {
   Intent,
   InvestigationResult,
   OsintFindings,
+  TraceStep,
 } from "./types";
+import { investigationTraces } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import {
   createEntity,
   getEntityByName,
@@ -185,14 +188,16 @@ function mergeCollaborativeWebResults(
   return Array.from(deduped.values());
 }
 
-//  Orchestrator Agent 
+//  Orchestrator Agent
 export class OrchestratorAgent {
   async investigate(
     userInput: string,
-    userId: string
+    userId: string,
+    options?: { scope?: "quick" | "standard" | "deep"; asyncEnrichment?: boolean }
   ): Promise<InvestigationResult> {
     const startTime = Date.now();
     const investigationId = crypto.randomUUID();
+    const traceSteps: TraceStep[] = [];
 
     console.log(`\n[Orchestrator] Starting investigation: "${userInput}" (${investigationId})`);
 
@@ -204,10 +209,32 @@ export class OrchestratorAgent {
     const relationshipAgent = new RelationshipAgent({ name: "Relationship Agent", llm, db });
     const analysisAgent = new AnalysisAgent({ name: "Analysis Agent", llm, db });
 
+    /** Record a completed/failed/skipped phase step */
+    function recordStep(
+      phase: string,
+      status: TraceStep["status"],
+      phaseStart: number,
+      summary?: string,
+      error?: string,
+    ) {
+      traceSteps.push({
+        phase,
+        status,
+        startedAt: new Date(phaseStart).toISOString(),
+        completedAt: new Date().toISOString(),
+        summary,
+        error,
+      });
+    }
+
     try {
       // 1. Parse intent (deterministic — no LLM call)
+      const intentStart = Date.now();
       const intent = parseIntent(userInput);
+      // Apply scope override if provided
+      if (options?.scope) intent.scope = options.scope;
       console.log(`[Orchestrator] Intent: target=${intent.target}, type=${intent.targetType}, scope=${intent.scope}`);
+      recordStep("intent_parse", "completed", intentStart, `target=${intent.target}, scope=${intent.scope}`);
 
       // 2. Warmup LLM (only supported by OllamaClient)
       if ("warmup" in llm && typeof (llm as { warmup: unknown }).warmup === "function") {
@@ -218,6 +245,20 @@ export class OrchestratorAgent {
       const entity = await this.prepareEntity(intent, userId);
       console.log(`[Orchestrator] Entity ready: ${entity.name} (id=${entity.id})`);
 
+      // Insert trace record (non-fatal)
+      try {
+        await db.insert(investigationTraces).values({
+          id: investigationId,
+          userId,
+          entityId: entity.id !== -1 ? entity.id : null,
+          target: intent.target,
+          status: "running",
+          startedAt: new Date(startTime),
+        });
+      } catch (traceErr) {
+        console.warn("[Orchestrator] Trace insert failed (non-fatal):", traceErr instanceof Error ? traceErr.message : traceErr);
+      }
+
       const ctx: ExecutionContext = {
         intent,
         entity,
@@ -227,6 +268,7 @@ export class OrchestratorAgent {
 
       // 4. OSINT gathering (always runs)
       console.log(`[Orchestrator] Step 1: OSINT gathering...`);
+      const osintStart = Date.now();
       const osintResult = await osintAgent.execute({
         entityId: entity.id.toString(),
         description: `Gather comprehensive OSINT on ${intent.targetType}`,
@@ -236,15 +278,18 @@ export class OrchestratorAgent {
 
       if (!osintResult.success) {
         console.error(`[Orchestrator] OSINT gathering failed: ${osintResult.error}`);
+        recordStep("osint", "failed", osintStart, undefined, osintResult.error);
         return this.buildFailedResult(investigationId, entity, startTime, osintResult.error);
       }
 
       ctx.findings = mapAgentResultToFindings(osintResult.data);
       computeFindingsStats(ctx.findings, osintResult.confidence);
       console.log(`[Orchestrator] OSINT complete: ${ctx.findings.profiles.length} profiles found`);
+      recordStep("osint", "completed", osintStart, `${ctx.findings.profiles.length} profiles, ${ctx.findings.emails.length} emails`);
 
       // 4b. Collaborative web search (use OSINT findings to guide follow-up search)
       console.log(`[Orchestrator] Step 1b: Collaborative web search...`);
+      const webSearchStart = Date.now();
       try {
         const { queries, seeds } = buildCollaborativeWebQueries(intent, ctx.findings);
         console.log(
@@ -270,13 +315,16 @@ export class OrchestratorAgent {
         } else {
           console.log(`[Orchestrator] Web search: no new results after deduping against OSINT findings`);
         }
+        recordStep("web_search", "completed", webSearchStart, `${ctx.findings.webResults?.length ?? 0} results`);
       } catch (error) {
         console.warn(`[Orchestrator] Web search failed (non-fatal):`, error instanceof Error ? error.message : error);
+        recordStep("web_search", "failed", webSearchStart, undefined, error instanceof Error ? error.message : String(error));
       }
 
       // 4c. Avatar enrichment — fetch profile pictures for profiles missing avatarData
       //     Processes in batches of 5 to avoid overwhelming target sites.
       console.log(`[Orchestrator] Step 1c: Enriching profiles with avatars...`);
+      const avatarStart = Date.now();
       try {
         let enrichedCount = 0;
         const profilesToEnrich = ctx.findings.profiles.filter(p => p.found && !p.avatarData);
@@ -303,11 +351,14 @@ export class OrchestratorAgent {
           );
         }
         console.log(`[Orchestrator] Avatar enrichment: ${enrichedCount}/${profilesToEnrich.length} profile picture(s) downloaded`);
+        recordStep("avatar", "completed", avatarStart, `${enrichedCount} avatars fetched`);
       } catch (error) {
         console.warn(`[Orchestrator] Avatar enrichment failed (non-fatal):`, error instanceof Error ? error.message : error);
+        recordStep("avatar", "failed", avatarStart, undefined, error instanceof Error ? error.message : String(error));
       }
 
       // 5. Content scraping (standard and deep scopes)
+      const contentScrapeStart = Date.now();
       if (intent.scope !== "quick") {
         console.log(`[Orchestrator] Step 2: Fetching profile content...`);
         try {
@@ -317,9 +368,13 @@ export class OrchestratorAgent {
           });
           ctx.findings.contentData = contentResult.contents;
           console.log(`[Orchestrator] Content: ${contentResult.summary.totalPosts} posts from ${contentResult.summary.platformsScraped} platforms`);
+          recordStep("content_scrape", "completed", contentScrapeStart, `${contentResult.summary.totalPosts} posts, ${contentResult.summary.platformsScraped} platforms`);
         } catch (error) {
           console.warn(`[Orchestrator] Content scraping failed (non-fatal):`, error instanceof Error ? error.message : error);
+          recordStep("content_scrape", "failed", contentScrapeStart, undefined, error instanceof Error ? error.message : String(error));
         }
+      } else {
+        recordStep("content_scrape", "skipped", contentScrapeStart, "quick scope");
       }
 
       // 6. Content analysis (standard and deep scopes, if content was scraped)
@@ -333,11 +388,14 @@ export class OrchestratorAgent {
 
       // 7. Risk analysis + recommendations (always runs)
       console.log(`[Orchestrator] Step 3: Risk analysis...`);
+      const riskStart = Date.now();
       ctx.analysis = await analyzeResults(llm, ctx.findings, intent, contentAnalysis);
       ctx.recommendations = generateRecommendations(ctx.findings, ctx.analysis.riskScore);
       console.log(`[Orchestrator] Risk score: ${ctx.analysis.riskScore}/10, ${ctx.recommendations.length} recommendations`);
+      recordStep("risk_analysis", "completed", riskStart, `score=${ctx.analysis.riskScore}/10, ${ctx.recommendations.length} recs`);
 
       // 7. Store + relationships (standard and deep scopes, skip if in-memory entity)
+      const relStart = Date.now();
       if (intent.scope !== "quick" && entity.id !== -1) {
         console.log(`[Orchestrator] Step 4: Storing findings...`);
         await storeOsintFindings(entity.id, {
@@ -359,12 +417,17 @@ export class OrchestratorAgent {
           ctx.networkAnalysis = relResult.data?.networkAnalysis;
           ctx.graphData = relResult.data?.graphData;
           console.log(`[Orchestrator] Relationships: ${relResult.data?.relationships?.length || 0} connections`);
+          recordStep("relationship", "completed", relStart, `${relResult.data?.relationships?.length ?? 0} connections`);
         } else {
           console.warn(`[Orchestrator] Relationship discovery failed (non-fatal): ${relResult.error}`);
+          recordStep("relationship", "failed", relStart, undefined, relResult.error);
         }
+      } else {
+        recordStep("relationship", "skipped", relStart, intent.scope === "quick" ? "quick scope" : "in-memory entity");
       }
 
       // 8. Deep analysis (deep scope only, skip if in-memory entity)
+      const deepStart = Date.now();
       if (intent.scope === "deep" && entity.id !== -1) {
         console.log(`[Orchestrator] Step 6: Deep behavioral analysis...`);
         const analysisResult = await analysisAgent.execute({
@@ -383,14 +446,32 @@ export class OrchestratorAgent {
         if (analysisResult.success) {
           ctx.deepAnalysis = analysisResult.data;
           console.log(`[Orchestrator] Deep analysis: ${analysisResult.data?.insights?.length || 0} insights`);
+          recordStep("deep_analysis", "completed", deepStart, `${analysisResult.data?.insights?.length ?? 0} insights`);
         } else {
           console.warn(`[Orchestrator] Deep analysis failed (non-fatal): ${analysisResult.error}`);
+          recordStep("deep_analysis", "failed", deepStart, undefined, analysisResult.error);
         }
+      } else {
+        recordStep("deep_analysis", "skipped", deepStart, intent.scope !== "deep" ? "not deep scope" : "in-memory entity");
       }
 
-      // 8. Done
+      // Done
       const duration = Math.round((Date.now() - startTime) / 1000);
       console.log(`[Orchestrator] Investigation complete in ${duration}s`);
+
+      // Update trace to completed (non-fatal)
+      try {
+        await db.update(investigationTraces)
+          .set({
+            status: "completed",
+            steps: traceSteps,
+            totalLatencyMs: Date.now() - startTime,
+            completedAt: new Date(),
+          })
+          .where(eq(investigationTraces.id, investigationId));
+      } catch (traceErr) {
+        console.warn("[Orchestrator] Trace update failed (non-fatal):", traceErr instanceof Error ? traceErr.message : traceErr);
+      }
 
       return {
         investigationId,
@@ -411,6 +492,21 @@ export class OrchestratorAgent {
       const err = getSafeErrorInfo(error);
       console.error(`[Orchestrator] Investigation failed: ${err.name}: ${err.message}`);
       const duration = Math.round((Date.now() - startTime) / 1000);
+
+      // Update trace to failed (non-fatal)
+      try {
+        await db.update(investigationTraces)
+          .set({
+            status: "failed",
+            steps: traceSteps,
+            errors: [err.message],
+            totalLatencyMs: Date.now() - startTime,
+            completedAt: new Date(),
+          })
+          .where(eq(investigationTraces.id, investigationId));
+      } catch (traceErr) {
+        console.warn("[Orchestrator] Trace update (failure) failed (non-fatal):", traceErr instanceof Error ? traceErr.message : traceErr);
+      }
 
       return {
         investigationId,

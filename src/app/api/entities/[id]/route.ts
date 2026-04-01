@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { entities, entityRelations, vectors } from "@/lib/db/schema";
 import { eq, or } from "drizzle-orm";
+import {
+  findCanonicalByEntity,
+  adaptLegacyRelation,
+  upsertCanonicalRelationship,
+  deleteCanonicalByEntity,
+  deleteCanonicalBySource,
+} from "@/lib/agents/tools/relationship-repository";
 
 export async function GET(
   request: NextRequest,
@@ -32,43 +39,68 @@ export async function GET(
       );
     }
 
-    // Get relationships
-    const relations = await db
+    // Read from canonical relationships table
+    const canonicalRels = await findCanonicalByEntity(entityId);
+
+    // Also read legacy rows and merge any not already in canonical (adapter mapping)
+    const legacyRels = await db
       .select()
       .from(entityRelations)
       .where(
         or(
           eq(entityRelations.sourceEntityId, entityId),
-          eq(entityRelations.targetEntityId, entityId)
-        )
+          eq(entityRelations.targetEntityId, entityId),
+        ),
       );
 
-    // Get related entities
-    const allIds = [
-      ...relations.map((r) => r.sourceEntityId),
-      ...relations.map((r) => r.targetEntityId),
-    ].filter((id) => id !== entityId);
-    const relatedEntityIds = Array.from(new Set(allIds));
+    // Build a set of (source, target, type) already covered by canonical
+    const canonicalKeys = new Set(
+      canonicalRels.map((r) => `${r.sourceEntityId}:${r.targetEntityId}:${r.type}`),
+    );
+
+    const adaptedLegacy = legacyRels
+      .map(adaptLegacyRelation)
+      .filter(
+        (r) => !canonicalKeys.has(`${r.sourceEntityId}:${r.targetEntityId}:${r.type}`),
+      );
+
+    const allRels = [...canonicalRels, ...adaptedLegacy];
+
+    // Collect related entity IDs
+    const relatedEntityIds = Array.from(
+      new Set(
+        allRels
+          .flatMap((r) => [r.sourceEntityId, r.targetEntityId])
+          .filter((id) => id !== entityId),
+      ),
+    );
 
     let relatedEntities: typeof entity[] = [];
     if (relatedEntityIds.length > 0) {
       relatedEntities = await db
         .select()
         .from(entities)
-        .where(
-          or(...relatedEntityIds.map((id) => eq(entities.id, id)))
-        );
+        .where(or(...relatedEntityIds.map((id) => eq(entities.id, id))));
     }
 
     return NextResponse.json({
       entity,
-      relationships: relations.map((r) => ({
-        ...r,
-        relatedEntity: relatedEntities.find(
-          (e) =>
-            e.id === (r.sourceEntityId === entityId ? r.targetEntityId : r.sourceEntityId)
-        ),
+      relationships: allRels.map((r) => ({
+        id: r.id,
+        sourceEntityId: r.sourceEntityId,
+        targetEntityId: r.targetEntityId,
+        type: r.type,
+        strength: r.strength,
+        context: r.context,
+        evidence: r.evidence,
+        status: r.status,
+        discoveredAt: r.discoveredAt,
+        lastVerified: r.lastVerified,
+        createdAt: r.createdAt,
         direction: r.sourceEntityId === entityId ? "outgoing" : "incoming",
+        relatedEntity: relatedEntities.find(
+          (e) => e.id === (r.sourceEntityId === entityId ? r.targetEntityId : r.sourceEntityId),
+        ),
       })),
     });
   } catch (error) {
@@ -148,12 +180,11 @@ export async function PUT(
 
     // Update relationships if provided
     if (body.relationships !== undefined && Array.isArray(body.relationships)) {
-      // Delete existing relationships where this entity is the source
-      await db
-        .delete(entityRelations)
-        .where(eq(entityRelations.sourceEntityId, entityId));
+      // Delete existing outgoing from both stores
+      await db.delete(entityRelations).where(eq(entityRelations.sourceEntityId, entityId));
+      await deleteCanonicalBySource(entityId);
 
-      // Insert new relationships
+      // Insert new relationships into both stores
       if (body.relationships.length > 0) {
         const relationshipData = body.relationships.map(
           (rel: { targetEntityId: number; relationType: string; strength?: number }) => ({
@@ -161,10 +192,18 @@ export async function PUT(
             targetEntityId: rel.targetEntityId,
             relationType: rel.relationType,
             strength: rel.strength || 50,
-          })
+          }),
         );
 
         await db.insert(entityRelations).values(relationshipData);
+        for (const rel of relationshipData) {
+          await upsertCanonicalRelationship({
+            sourceEntityId: rel.sourceEntityId,
+            targetEntityId: rel.targetEntityId,
+            type: rel.relationType,
+            strength: rel.strength,
+          });
+        }
       }
     }
 
@@ -210,15 +249,16 @@ export async function DELETE(
       );
     }
 
-    // Delete relationships
+    // Delete from both relationship stores
     await db
       .delete(entityRelations)
       .where(
         or(
           eq(entityRelations.sourceEntityId, entityId),
-          eq(entityRelations.targetEntityId, entityId)
-        )
+          eq(entityRelations.targetEntityId, entityId),
+        ),
       );
+    await deleteCanonicalByEntity(entityId);
 
     // Delete vectors
     await db.delete(vectors).where(eq(vectors.entityId, entityId));

@@ -83,6 +83,16 @@ export interface OsintFindings {
   metadata: Record<string, any>;
 }
 
+// Trace Step — lightweight record of a single investigation phase
+export interface TraceStep {
+  phase: string; // 'intent_parse' | 'osint' | 'web_search' | 'avatar' | 'content_scrape' | 'risk_analysis' | 'relationship' | 'deep_analysis'
+  status: 'completed' | 'failed' | 'skipped';
+  startedAt: string; // ISO string
+  completedAt: string; // ISO string
+  summary?: string;  // e.g. "15 profiles, 3 emails"
+  error?: string;
+}
+
 // Investigation Result (final output)
 export interface InvestigationResult {
   investigationId: string;

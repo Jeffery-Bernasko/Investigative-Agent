@@ -138,6 +138,11 @@ export function mapAgentResultToFindings(agentData: any): OsintFindings {
         }
     }
 
+    // Personal websites discovered during person search
+    if (Array.isArray(agentData?.personalWebsites) && agentData.personalWebsites.length > 0) {
+        findings.personalWebsites = agentData.personalWebsites;
+    }
+
     return findings;
 }
 

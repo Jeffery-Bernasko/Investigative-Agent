@@ -128,6 +128,7 @@ interface InvestigationData {
         domains: Array<string | { domain: string; data?: any }>;
         phones?: Array<{ number: string; data?: any }>;
         webResults?: Array<{ title: string; url: string; snippet: string }>;
+        personalWebsites?: Array<{ url: string; title: string; snippet: string }>;
         metadata: Record<string, any>;
     };
     analysis?: { riskScore: number; insights: string[]; summary: string };
@@ -318,7 +319,8 @@ export function generateInvestigationReport(data: InvestigationData): void {
     doc.setTextColor(...COLORS.body);
     doc.text(data.entity.type.charAt(0).toUpperCase() + data.entity.type.slice(1), 55, 82);
 
-    // Meta line
+    // Meta line — explicitly reset font to guard against state from entity name render
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(...COLORS.muted);
     doc.text(`Report ID: ${data.investigationId}`, 28, 95);
@@ -653,7 +655,7 @@ export function generateInvestigationReport(data: InvestigationData): void {
                 y = checkPageBreak(doc, y, 6);
                 doc.setFontSize(7);
                 doc.setTextColor(...COLORS.blue);
-                doc.text("→", 22, y);
+                doc.text("->", 22, y);
                 doc.setTextColor(...COLORS.body);
                 const lines = doc.splitTextToSize(r, contentWidth - 12);
                 doc.text(lines, 28, y);
@@ -1141,7 +1143,7 @@ export function generateInvestigationReport(data: InvestigationData): void {
                         doc.setFontSize(6);
                         doc.setFont("helvetica", "bold");
                         doc.setTextColor(...COLORS.green);
-                        doc.text("✓ ACTIONABLE", pageWidth - 42, y + 6);
+                        doc.text("[OK] ACTIONABLE", pageWidth - 42, y + 6);
                     } else {
                         doc.setFontSize(6);
                         doc.setFont("helvetica", "normal");
@@ -1641,31 +1643,6 @@ export function generateInvestigationReport(data: InvestigationData): void {
         y = (doc as any).lastAutoTable.finalY + 6;
     }
 
-    // WEB INTELLIGENCE
-    if (data.findings.webResults && data.findings.webResults.length > 0) {
-        y = drawSectionHeader(doc, "Web Intelligence (Search Results)", y);
-
-        autoTable(doc, {
-            startY: y,
-            margin: { left: 20, right: 20 },
-            head: [["#", "Title", "URL"]],
-            body: data.findings.webResults.slice(0, 15).map((w, i) => [
-                String(i + 1),
-                w.title.length > 60 ? w.title.slice(0, 60) + "..." : w.title,
-                w.url.length > 55 ? w.url.slice(0, 55) + "..." : w.url,
-            ]),
-            theme: "grid",
-            styles: { fontSize: 7, cellPadding: 2.5, textColor: COLORS.body, lineColor: COLORS.border, lineWidth: 0.2 },
-            headStyles: { fillColor: COLORS.primary, textColor: COLORS.white, fontStyle: "bold", fontSize: 7 },
-            alternateRowStyles: { fillColor: COLORS.altRow },
-            columnStyles: {
-                0: { cellWidth: 8, halign: "center" },
-                1: { cellWidth: 65 },
-                2: { cellWidth: "auto" },
-            },
-        });
-        y = (doc as any).lastAutoTable.finalY + 6;
-    }
 
     // KEY INSIGHTS
     // ==========================
@@ -1781,7 +1758,7 @@ export function generateInvestigationReport(data: InvestigationData): void {
             doc.setFontSize(7);
             doc.setFont("helvetica", "bold");
             doc.setTextColor(...COLORS.blue);
-            doc.text("→", 26, y);
+            doc.text("->", 26, y);
             doc.setFont("helvetica", "normal");
             const recLines = doc.splitTextToSize(insight.recommendation, contentWidth - 14);
             doc.text(recLines, 30, y);
@@ -1825,28 +1802,6 @@ export function generateInvestigationReport(data: InvestigationData): void {
             doc.setFont("helvetica", "normal");
             doc.setTextColor(...COLORS.body);
             const lines = doc.splitTextToSize(insight, contentWidth - 10);
-            doc.text(lines, 28, y);
-            y += lines.length * 4 + 2;
-        });
-        y += 2;
-    }
-
-    // RECOMMENDATIONS
-    if (data.recommendations && data.recommendations.length > 0) {
-        y = drawSectionHeader(doc, "Recommendations", y);
-
-        doc.setFontSize(8);
-        doc.setFont("helvetica", "normal");
-        data.recommendations.forEach((rec) => {
-            y = checkPageBreak(doc, y, 8);
-            // Strip emoji prefix for cleaner PDF look
-            const cleanRec = rec.replace(/^[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}]\s*/u, "");
-            doc.setTextColor(...COLORS.blue);
-            doc.setFont("helvetica", "bold");
-            doc.text("-", 22, y);
-            doc.setFont("helvetica", "normal");
-            doc.setTextColor(...COLORS.body);
-            const lines = doc.splitTextToSize(cleanRec, contentWidth - 10);
             doc.text(lines, 28, y);
             y += lines.length * 4 + 2;
         });

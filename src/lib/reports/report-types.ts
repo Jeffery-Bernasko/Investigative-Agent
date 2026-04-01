@@ -126,6 +126,7 @@ export interface InvestigationData {
         domains: Array<string | { domain: string; data?: any }>;
         phones?: Array<{ number: string; data?: any }>;
         webResults?: Array<{ title: string; url: string; snippet: string }>;
+        personalWebsites?: Array<{ url: string; title: string; snippet: string }>;
         metadata: Record<string, any>;
     };
     analysis?: { riskScore: number; insights: string[]; summary: string };

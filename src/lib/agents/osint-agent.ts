@@ -8,7 +8,7 @@ import { gatherEmailIntelligence } from "./tools/email-intel";
 import { gatherDomainIntelligence } from "./tools/domain-intel";
 import { gatherPhoneIntelligence } from "./tools/phone-intel";
 import { searchUsername } from "./tools/username-search";
-import { searchUsernameOnPlatforms, ALL_PLATFORM_NAMES } from "./tools/username-search";
+import { searchUsernameOnPlatforms } from "./tools/username-search";
 import { searchPersonByName } from "./tools/person-search";
 import { extractEmails, extractDomains } from "./tools/osint-tools";
 
@@ -108,45 +108,20 @@ export class OsintAgent extends BaseAgent {
           if (personRes?.found) {
             results.profiles.push(...personRes.profiles.map((p: any) => ({ ...p, provenance })));
 
+            // Store personal websites discovered during person search
+            if (personRes.personalWebsites && personRes.personalWebsites.length > 0) {
+              if (!results.personalWebsites) results.personalWebsites = [];
+              results.personalWebsites.push(...personRes.personalWebsites);
+            }
+
             // Merge the identity map into our global confirmed platforms
             const identityMap = personRes.identityMap || {};
             for (const platform of Object.keys(identityMap)) {
               globalConfirmedPlatforms.add(platform);
             }
 
-            // Pivot: Only add username targets for platforms NOT yet confirmed
-            if (currentTarget.depth < MAX_DEPTH) {
-              const pivotUsernames = new Set<string>();
-
-              // Extract unique usernames from the identity map
-              for (const [_platform, identity] of Object.entries(identityMap)) {
-                pivotUsernames.add(identity.username);
-              }
-
-              // Determine which platforms still need searching
-              const missingPlatforms = ALL_PLATFORM_NAMES.filter(
-                (p) => !globalConfirmedPlatforms.has(p)
-              );
-
-              if (missingPlatforms.length > 0 && pivotUsernames.size > 0) {
-                console.log(
-                  `🔄 Pivot: ${pivotUsernames.size} username(s) from identity map, ${missingPlatforms.length} platforms still missing`
-                );
-
-                pivotUsernames.forEach((u) => {
-                  console.log(`   🔄 Queuing targeted search for "${u}" on ${missingPlatforms.length} missing platforms`);
-                  pendingTargets.push({
-                    term: u,
-                    type: "username",
-                    depth: currentTarget.depth + 1,
-                    parent: currentTarget.term,
-                    targetPlatforms: [...missingPlatforms],
-                  });
-                });
-              } else {
-                console.log(`✅ All platforms covered by person search — no pivot needed`);
-              }
-            }
+            // Note: person-search Phase 2 already fills platform gaps using
+            // the identity map usernames, so no additional pivot is needed here.
           }
         }
         else if (currentTarget.type === "username") {

@@ -26,7 +26,7 @@ export function renderFindings(
     y = renderEmails(doc, y, data);
     y = renderDomains(doc, y, data);
     y = renderPhones(doc, y, data);
-    y = renderWebResults(doc, y, data);
+    y = renderPersonalWebsites(doc, y, data);
     return y;
 }
 
@@ -101,16 +101,18 @@ function renderProfiles(
     // ── PROFILE AVATAR GALLERY ──
     const profilesWithAvatars = foundProfiles.filter(p => p.avatarData);
     if (profilesWithAvatars.length > 0) {
-        const COLS = 4;
+        // Adaptive layout based on avatar count
+        const count = profilesWithAvatars.length;
+        const COLS = count > 24 ? 6 : count > 12 ? 5 : 4;
+        const IMG_SIZE = count > 24 ? 12 : count > 12 ? 14 : 16;
         const CELL_W = contentWidth / COLS;
-        const IMG_SIZE = 16;
         const CELL_H = IMG_SIZE + 14;
 
         y = checkPageBreak(doc, y, 10);
         doc.setFontSize(8);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(...COLORS.primary);
-        doc.text("PROFILE AVATARS", 20, y);
+        doc.text(`PROFILE AVATARS (${count} of ${foundProfiles.length} profiles)`, 20, y);
         y += 6;
 
         profilesWithAvatars.forEach((profile, idx) => {
@@ -128,10 +130,14 @@ function renderProfiles(
             const imgX = cellX + (CELL_W - IMG_SIZE) / 2;
             const imgY = y;
 
-            // Avatar image
+            // Avatar image — support PNG, JPEG, and WebP formats
             try {
                 const imgData = profile.avatarData!;
-                const format = imgData.startsWith("data:image/png") ? "PNG" : "JPEG";
+                const format = imgData.startsWith("data:image/png")
+                    ? "PNG"
+                    : imgData.startsWith("data:image/webp")
+                        ? "WEBP"
+                        : "JPEG";
                 doc.addImage(imgData, format, imgX, imgY, IMG_SIZE, IMG_SIZE, undefined, "FAST");
             } catch {
                 // Fallback placeholder box
@@ -142,7 +148,7 @@ function renderProfiles(
             }
 
             // Platform name
-            doc.setFontSize(7);
+            doc.setFontSize(count > 24 ? 6 : 7);
             doc.setFont("helvetica", "bold");
             doc.setTextColor(...COLORS.heading);
             doc.text(profile.platform, cellX + CELL_W / 2, imgY + IMG_SIZE + 4, { align: "center" });
@@ -290,19 +296,20 @@ function renderPhones(doc: jsPDF, y: number, data: InvestigationData): number {
     return lastTableY(doc) + 6;
 }
 
-function renderWebResults(doc: jsPDF, y: number, data: InvestigationData): number {
-    if (!data.findings.webResults || data.findings.webResults.length === 0) return y;
+function renderPersonalWebsites(doc: jsPDF, y: number, data: InvestigationData): number {
+    if (!data.findings.personalWebsites || data.findings.personalWebsites.length === 0) return y;
 
-    y = drawSectionHeader(doc, "Web Intelligence (Search Results)", y);
+    y = drawSectionHeader(doc, "Personal Websites", y);
 
     autoTable(doc, {
         startY: y,
         margin: { left: 20, right: 20 },
-        head: [["#", "Title", "URL"]],
-        body: data.findings.webResults.slice(0, 15).map((w, i) => [
+        head: [["#", "Title", "URL", "Description"]],
+        body: data.findings.personalWebsites.map((w, i) => [
             String(i + 1),
-            w.title.length > 60 ? w.title.slice(0, 60) + "..." : w.title,
-            w.url.length > 55 ? w.url.slice(0, 55) + "..." : w.url,
+            w.title.length > 40 ? w.title.slice(0, 40) + "..." : w.title,
+            w.url.length > 45 ? w.url.slice(0, 45) + "..." : w.url,
+            w.snippet.length > 60 ? w.snippet.slice(0, 60) + "..." : w.snippet,
         ]),
         theme: "grid",
         styles: { fontSize: 7, cellPadding: 2.5, textColor: COLORS.body, lineColor: COLORS.border, lineWidth: 0.2 },
@@ -310,10 +317,12 @@ function renderWebResults(doc: jsPDF, y: number, data: InvestigationData): numbe
         alternateRowStyles: { fillColor: COLORS.altRow },
         columnStyles: {
             0: { cellWidth: 8, halign: "center" },
-            1: { cellWidth: 65 },
-            2: { cellWidth: "auto" },
+            1: { cellWidth: 40 },
+            2: { cellWidth: 50 },
+            3: { cellWidth: "auto" },
         },
     });
 
     return lastTableY(doc) + 6;
 }
+

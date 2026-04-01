@@ -1,22 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { jobQueue } from '@/lib/db/schema';
-import { authClient } from '@/lib/auth/client';
+import { auth } from '@/lib/auth';
+import { sql, desc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 
 export async function GET(request: NextRequest) {
   try {
     // Get the current user session
-    const session = await authClient.getSession();
+    const session = await auth.api.getSession({ headers: request.headers });
 
-    if (!session?.session) {
+    if (!session?.user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       );
     }
 
-    const userId = session.session.userId;
+    const userId = session.user.id;
 
     // Get all jobs for the user
     const jobs = await db
@@ -38,21 +39,19 @@ export async function GET(request: NextRequest) {
   }
 }
 
-import { sql, desc } from 'drizzle-orm';
-
 export async function POST(request: NextRequest) {
   try {
     // Get the current user session
-    const session = await authClient.getSession();
+    const session = await auth.api.getSession({ headers: request.headers });
 
-    if (!session?.session) {
+    if (!session?.user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       );
     }
 
-    const userId = session.session.userId;
+    const userId = session.user.id;
 
     // Parse request body
     const body = await request.json();
@@ -80,7 +79,7 @@ export async function POST(request: NextRequest) {
     // Create job in the queue
     const jobId = randomUUID();
 
-    const newJob = await db.insert(jobQueue).values({
+    await db.insert(jobQueue).values({
       id: jobId,
       userId: userId,
       entityId: entityId || null,

@@ -36,6 +36,7 @@
   ],
   "exclude": [
     "node_modules",
-    "src/app/api/auth/[...path]"
+    "src/app/api/auth/[...path]",
+    "worker"
   ]
 }

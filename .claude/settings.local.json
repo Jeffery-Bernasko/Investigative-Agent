@@ -6,7 +6,9 @@
       "Bash(find /d/septo/src/components -name \"*.tsx\" | xargs wc -l | sort -rn | head -15)",
       "Bash(git -C /d/septo log --oneline -20)",
       "Bash(cd D:/septo && npx tsc --noEmit 2>&1 | head -40)",
-      "Bash(cd D:/septo && npx tsc --noEmit 2>&1 | grep \"username-search\\\\|avatar-fetcher\\\\|report-generator\\\\|report-types\\\\|findings.ts\")"
+      "Bash(cd D:/septo && npx tsc --noEmit 2>&1 | grep \"username-search\\\\|avatar-fetcher\\\\|report-generator\\\\|report-types\\\\|findings.ts\")",
+      "Bash(wc -l /d/septo/src/lib/agents/*.ts)",
+      "Bash(xargs wc:*)"
     ]
   }
 }

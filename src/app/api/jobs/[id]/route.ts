@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { jobQueue } from '@/lib/db/schema';
-import { authClient } from '@/lib/auth/client';
+import { auth } from '@/lib/auth';
 import { eq } from 'drizzle-orm';
 
 export async function GET(
@@ -12,16 +12,16 @@ export async function GET(
     const { id: jobId } = await params;
 
     // Get the current user session
-    const session = await authClient.getSession();
+    const session = await auth.api.getSession({ headers: request.headers });
 
-    if (!session?.session) {
+    if (!session?.user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       );
     }
 
-    const userId = session.session.userId;
+    const userId = session.user.id;
 
     // Get the job
     const [job] = await db

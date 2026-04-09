@@ -32,66 +32,49 @@ interface SearchResult {
   createdAt: string;
 }
 
-// Mock search function
-const performSearch = async (query: string): Promise<SearchResult[]> => {
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+async function performSearch(query: string): Promise<SearchResult[]> {
+  const res = await fetch("/api/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, limit: 20, useVectorSearch: true }),
+  });
 
-  return [
-    {
-      id: "1",
-      type: "report",
-      title: "Phishing Campaign Targeting Financial Sector",
-      content:
-        "A sophisticated phishing campaign has been detected targeting employees of major financial institutions using lookalike domains.",
-      similarity: 0.94,
-      severity: "high",
-      tags: ["phishing", "financial", "apt"],
-      createdAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-    },
-    {
-      id: "2",
-      type: "entity",
-      title: "TechCorp Industries",
-      content: "Technology company based in Palo Alto, CA with 5000+ employees.",
-      similarity: 0.87,
-      threatScore: 25,
-      entityType: "organization",
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-    },
-    {
-      id: "3",
-      type: "report",
-      title: "New Ransomware Variant Discovered",
-      content:
-        "Security researchers have identified a new ransomware variant dubbed 'CryptoShade' targeting healthcare organizations.",
-      similarity: 0.82,
-      severity: "critical",
-      tags: ["ransomware", "healthcare", "malware"],
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-    },
-    {
-      id: "4",
-      type: "entity",
-      title: "John Doe",
-      content: "Software Developer at TechCorp Industries. Active on multiple social platforms.",
-      similarity: 0.78,
-      threatScore: 15,
-      entityType: "person",
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
-    },
-    {
-      id: "5",
-      type: "report",
-      title: "Supply Chain Attack Analysis",
-      content:
-        "Analysis of recent supply chain attacks reveals new patterns in dependency compromises.",
-      similarity: 0.75,
-      severity: "medium",
-      tags: ["supply-chain", "npm", "dependency"],
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 8).toISOString(),
-    },
-  ];
-};
+  if (!res.ok) throw new Error("Search request failed");
+
+  const data = await res.json();
+
+  const entityResults: SearchResult[] = (data.entities || []).map(
+    (e: Record<string, unknown>) => ({
+      id: String(e.id),
+      type: "entity" as const,
+      title: String(e.name || "Unknown Entity"),
+      content: String(e.description || e.osintData || ""),
+      similarity: typeof e.score === "number" ? e.score : undefined,
+      threatScore: typeof e.threatScore === "number" ? e.threatScore : undefined,
+      entityType: String(e.type || ""),
+      tags: Array.isArray(e.tags) ? e.tags : undefined,
+      createdAt: String(e.createdAt || new Date().toISOString()),
+    })
+  );
+
+  const reportResults: SearchResult[] = (data.reports || []).map(
+    (r: Record<string, unknown>) => ({
+      id: String(r.id),
+      type: "report" as const,
+      title: String(r.title || "Untitled Report"),
+      content: String(r.summary || r.content || ""),
+      similarity: typeof r.score === "number" ? r.score : undefined,
+      severity: String(r.threatLevel || ""),
+      tags: Array.isArray(r.tags) ? r.tags : undefined,
+      createdAt: String(r.createdAt || new Date().toISOString()),
+    })
+  );
+
+  // Merge and sort by similarity score descending
+  return [...entityResults, ...reportResults].sort(
+    (a, b) => (b.similarity ?? 0) - (a.similarity ?? 0)
+  );
+}
 
 export default function SearchPage() {
   const [query, setQuery] = useState("");

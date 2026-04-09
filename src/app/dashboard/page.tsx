@@ -85,7 +85,10 @@ export default function DashboardPage() {
               </p>
             </div>
             <div className="w-px h-8 bg-glass-border" />
-            <button className="btn-primary text-sm">
+            <button
+              onClick={() => router.push("/reports")}
+              className="btn-primary text-sm"
+            >
               + New Report
             </button>
           </div>
